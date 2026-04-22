@@ -60,14 +60,22 @@ class OrderService
         $realGoodsId = $goodsId;
 
         if ($goodsType == 10) {
-            $drama = Drama::find($goodsId);
+            $drama = Drama::where('id', $goodsId)->where('status', 1)->find();
             if (!$drama) {
-                throw new ValidateException('短剧不存在');
+                throw new ValidateException('短剧不存在或已下架');
             }
-            $episode = DramaEpisode::where('drama_id', $goodsId)->order('episode_number', 'asc')->find();
-            if (!$episode) {
+            $availableEpisode = DramaEpisode::where('drama_id', $goodsId)
+                ->where('status', 1)
+                ->order('episode_number', 'asc')
+                ->order('id', 'asc')
+                ->find();
+            if (!$availableEpisode) {
                 throw new ValidateException('该短剧没有可购买的剧集');
             }
+            $legacyFirstEpisodeId = (int)DramaEpisode::where('drama_id', $goodsId)
+                ->order('episode_number', 'asc')
+                ->order('id', 'asc')
+                ->value('id');
             // 订单行记录整剧：goods_type=10 + drama_id，避免与单集 goods_type=1 + episode_id 混淆
             $realGoodsType = 10;
             $realGoodsId = $goodsId;
@@ -81,15 +89,18 @@ class OrderService
                 ->join('djxs_order_goods g', 'o.id = g.order_id')
                 ->where('o.user_id', $userId)
                 ->where('o.status', 1)
-                ->where(function($query) use ($goodsType, $goodsId, $realGoodsType, $realGoodsId, $episode) {
+                ->where(function($query) use ($goodsType, $goodsId, $realGoodsType, $realGoodsId, $legacyFirstEpisodeId) {
                     $query->where(function($q) use ($goodsType, $goodsId) {
                         $q->where('g.goods_type', $goodsType)->where('g.goods_id', $goodsId);
                     })->whereOr(function($q) use ($realGoodsType, $realGoodsId) {
                         $q->where('g.goods_type', $realGoodsType)->where('g.goods_id', $realGoodsId);
-                    })->whereOr(function($q) use ($episode) {
-                        // 历史订单：整剧曾记为第一集 id + goods_type=1
-                        $q->where('g.goods_type', 1)->where('g.goods_id', $episode->id);
                     });
+                    if ($legacyFirstEpisodeId > 0) {
+                        $query->whereOr(function($q) use ($legacyFirstEpisodeId) {
+                            // 历史订单：整剧曾记为第一集 id + goods_type=1
+                            $q->where('g.goods_type', 1)->where('g.goods_id', $legacyFirstEpisodeId);
+                        });
+                    }
                 })
                 ->count();
 
@@ -101,14 +112,17 @@ class OrderService
                 ->join('djxs_order_goods g', 'o.id = g.order_id')
                 ->where('o.user_id', $userId)
                 ->where('o.status', 0)
-                ->where(function($query) use ($goodsType, $goodsId, $realGoodsType, $realGoodsId, $episode) {
+                ->where(function($query) use ($goodsType, $goodsId, $realGoodsType, $realGoodsId, $legacyFirstEpisodeId) {
                     $query->where(function($q) use ($goodsType, $goodsId) {
                         $q->where('g.goods_type', $goodsType)->where('g.goods_id', $goodsId);
                     })->whereOr(function($q) use ($realGoodsType, $realGoodsId) {
                         $q->where('g.goods_type', $realGoodsType)->where('g.goods_id', $realGoodsId);
-                    })->whereOr(function($q) use ($episode) {
-                        $q->where('g.goods_type', 1)->where('g.goods_id', $episode->id);
                     });
+                    if ($legacyFirstEpisodeId > 0) {
+                        $query->whereOr(function($q) use ($legacyFirstEpisodeId) {
+                            $q->where('g.goods_type', 1)->where('g.goods_id', $legacyFirstEpisodeId);
+                        });
+                    }
                 })
                 ->count();
 
@@ -116,9 +130,17 @@ class OrderService
                 throw new ValidateException('您已存在该短剧的待支付订单，请先完成支付');
             }
         } elseif ($goodsType == 20) {
-            $novel = Novel::find($goodsId);
+            $novel = Novel::where('id', $goodsId)->where('status', 1)->find();
             if (!$novel) {
-                throw new ValidateException('小说不存在');
+                throw new ValidateException('小说不存在或已下架');
+            }
+            $availableChapter = NovelChapter::where('novel_id', $goodsId)
+                ->where('status', 1)
+                ->order('chapter_number', 'asc')
+                ->order('id', 'asc')
+                ->find();
+            if (!$availableChapter) {
+                throw new ValidateException('该小说没有可购买的章节');
             }
             $realGoodsType = 20;
             $realGoodsId = $goodsId;
@@ -164,25 +186,33 @@ class OrderService
         } else {
             switch ($goodsType) {
                 case 1:
-                    $episode = DramaEpisode::find($goodsId);
+                    $episode = DramaEpisode::where('id', $goodsId)->where('status', 1)->find();
                     if (!$episode) {
-                        throw new ValidateException('短剧剧集不存在');
+                        throw new ValidateException('短剧剧集不存在或已下架');
+                    }
+                    $drama = Drama::where('id', (int)$episode->drama_id)->where('status', 1)->find();
+                    if (!$drama) {
+                        throw new ValidateException('短剧不存在或已下架');
                     }
                     $goodsName = $episode->title;
                     $price = $episode->price;
                     break;
                 case 2:
-                    $chapter = NovelChapter::find($goodsId);
+                    $chapter = NovelChapter::where('id', $goodsId)->where('status', 1)->find();
                     if (!$chapter) {
-                        throw new ValidateException('小说章节不存在');
+                        throw new ValidateException('小说章节不存在或已下架');
+                    }
+                    $novel = Novel::where('id', (int)$chapter->novel_id)->where('status', 1)->find();
+                    if (!$novel) {
+                        throw new ValidateException('小说不存在或已下架');
                     }
                     $goodsName = $chapter->title;
                     $price = $chapter->price;
                     break;
                 case 3:
-                    $level = MemberLevel::find($goodsId);
+                    $level = MemberLevel::where('id', $goodsId)->where('status', 1)->find();
                     if (!$level) {
-                        throw new ValidateException('会员等级不存在');
+                        throw new ValidateException('会员等级不存在或已停用');
                     }
                     $goodsName = $level->name . '会员';
                     $price = $level->price;
@@ -671,14 +701,30 @@ class OrderService
         $goodsId = (int)$goodsId;
 
         if ($goodsType == 10) {
-            $drama = Drama::find($goodsId);
+            $drama = Drama::where('id', $goodsId)->where('status', 1)->find();
             if (!$drama) {
-                throw new ValidateException('短剧不存在');
+                throw new ValidateException('短剧不存在或已下架');
+            }
+            $availableEpisode = DramaEpisode::where('drama_id', $goodsId)
+                ->where('status', 1)
+                ->order('episode_number', 'asc')
+                ->order('id', 'asc')
+                ->find();
+            if (!$availableEpisode) {
+                throw new ValidateException('该短剧没有可购买的剧集');
             }
         } elseif ($goodsType == 20) {
-            $novel = Novel::find($goodsId);
+            $novel = Novel::where('id', $goodsId)->where('status', 1)->find();
             if (!$novel) {
-                throw new ValidateException('小说不存在');
+                throw new ValidateException('小说不存在或已下架');
+            }
+            $availableChapter = NovelChapter::where('novel_id', $goodsId)
+                ->where('status', 1)
+                ->order('chapter_number', 'asc')
+                ->order('id', 'asc')
+                ->find();
+            if (!$availableChapter) {
+                throw new ValidateException('该小说没有可购买的章节');
             }
         }
 
@@ -849,6 +895,7 @@ class OrderService
         $status = strtoupper((string)($data['status'] ?? $data['trade_status'] ?? ''));
         $payTypeRaw = strtolower((string)($data['pay_type'] ?? 'wechat'));
         $isAlipayNotify = isset($data['trade_no']) || isset($data['out_trade_no']);
+        $isAlipayReturn = (($data['method'] ?? '') === 'alipay.trade.page.pay.return');
         $amount = (float)($data['total_amount'] ?? $data['amount'] ?? 0);
         $nonce = (string)($data['nonce'] ?? '');
         $timestampRaw = $data['ts'] ?? ($data['timestamp'] ?? null);
@@ -862,7 +909,8 @@ class OrderService
             return ['success' => false, 'msg' => '回调参数不完整'];
         }
 
-        if (!$this->checkNotifyClientIp($clientIp)) {
+        // 支付宝同步回跳来自用户浏览器出口 IP，不应按服务器异步通知白名单拦截
+        if (!$isAlipayReturn && !$this->checkNotifyClientIp($clientIp)) {
             return ['success' => false, 'msg' => '回调来源IP不在白名单'];
         }
 
