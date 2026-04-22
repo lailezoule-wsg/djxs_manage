@@ -28,8 +28,10 @@ class FlashSaleService
     private const REQUEST_BORN_PREFIX = 'flash:sale:request:born:';
     private const USER_ITEM_LOCK_PREFIX = 'flash:sale:user:item:lock:';
     private const USER_ITEM_PENDING_PREFIX = 'flash:sale:user:item:pending:';
+    private const RELEASE_FALLBACK_LOCK_KEY = 'flash:sale:reserve:release:fallback:lock';
     private const TOKEN_TTL_SECONDS = 90;
     private const REQUEST_STATE_TTL = 900;
+    private const RELEASE_FALLBACK_THROTTLE_SECONDS = 3;
     private const ORDER_STATUS_QUEUEING = 8;
     private const REQUEST_LOCK_TTL_SECONDS = 120;
     private const USER_ITEM_LOCK_TTL_SECONDS = 60;
@@ -46,7 +48,7 @@ class FlashSaleService
      */
     public function list(array $params = []): array
     {
-        $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
+        $this->runReleaseFallbackIfDue();
         $page = max(1, (int)($params['page'] ?? 1));
         $limit = max(1, min(50, (int)($params['limit'] ?? 10)));
         $tab = strtolower(trim((string)($params['tab'] ?? 'running')));
@@ -125,7 +127,7 @@ class FlashSaleService
      */
     public function detail(int $activityId): array
     {
-        $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
+        $this->runReleaseFallbackIfDue();
         if ($activityId <= 0) {
             throw new ValidateException('活动不存在');
         }
@@ -163,7 +165,7 @@ class FlashSaleService
      */
     public function issueToken(int $userId, int $activityId, int $itemId, string $clientIp = '', string $deviceId = ''): array
     {
-        $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
+        $this->runReleaseFallbackIfDue();
         if ($activityId <= 0 || $itemId <= 0) {
             throw new ValidateException('参数不完整');
         }
@@ -188,7 +190,7 @@ class FlashSaleService
      */
     public function precheck(int $userId, array $payload): array
     {
-        $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
+        $this->runReleaseFallbackIfDue();
         $activityId = (int)($payload['activity_id'] ?? 0);
         $itemId = (int)($payload['item_id'] ?? 0);
         $buyCount = max(1, (int)($payload['buy_count'] ?? 1));
@@ -258,7 +260,6 @@ class FlashSaleService
      */
     public function createOrder(int $userId, array $payload): array
     {
-        $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
         $activityId = (int)($payload['activity_id'] ?? 0);
         $itemId = (int)($payload['item_id'] ?? 0);
         $buyCount = (int)($payload['buy_count'] ?? 1);
@@ -663,7 +664,7 @@ class FlashSaleService
      */
     public function result(int $userId, string $requestId): array
     {
-        $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
+        $this->runReleaseFallbackIfDue();
         if (!$this->isValidRequestId($requestId)) {
             throw new ValidateException('request_id 不合法');
         }
@@ -865,6 +866,23 @@ class FlashSaleService
         }
 
         return $released;
+    }
+
+    /**
+     * 非核心链路的兜底触发：短间隔内仅允许一次释放检查。
+     */
+    private function runReleaseFallbackIfDue(): void
+    {
+        if ((int)env('FLASH_SALE_RELEASE_FALLBACK_ENABLED', 1) !== 1) {
+            return;
+        }
+        $throttleSeconds = max(1, min(30, (int)env('FLASH_SALE_RELEASE_FALLBACK_THROTTLE_SECONDS', self::RELEASE_FALLBACK_THROTTLE_SECONDS)));
+        $lockToken = $this->acquireOwnedLock(self::RELEASE_FALLBACK_LOCK_KEY, $throttleSeconds);
+        if ($lockToken === '') {
+            return;
+        }
+        $limit = max(1, min(500, (int)env('FLASH_SALE_RELEASE_BATCH', 100)));
+        $this->releaseDueReserveOrders($limit);
     }
 
     /**

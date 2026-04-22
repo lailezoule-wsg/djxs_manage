@@ -3,7 +3,7 @@ declare (strict_types = 1);
 
 namespace app\command;
 
-use app\api\service\FlashSaleService;
+use app\job\FlashSaleReserveReleaseJob;
 use think\console\Command;
 use think\console\Input;
 use think\console\input\Option;
@@ -30,8 +30,8 @@ class FlashSaleReleaseReserve extends Command
     protected function execute(Input $input, Output $output)
     {
         $limit = max(1, min(500, (int)$input->getOption('limit')));
-        $service = new FlashSaleService();
-        $released = $service->releaseDueReserveOrders($limit);
+        $job = new FlashSaleReserveReleaseJob();
+        $released = $job->run($limit);
         $output->writeln(sprintf(
             '[flash-sale:release-reserve] limit=%d released=%d executed_at=%s',
             $limit,
