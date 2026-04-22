@@ -103,6 +103,7 @@ class FlashSaleService
             ])
             ->toArray();
 
+        $listRows = $this->filterUnavailableContentItems($result['data'] ?? []);
         $list = array_map(function (array $row) use ($now): array {
             $available = max(0, (int)$row['total_stock'] - (int)$row['sold_stock'] - (int)$row['locked_stock']);
             $row['available_stock'] = $available;
@@ -110,7 +111,7 @@ class FlashSaleService
             $row['cover'] = (string)$row['cover_snapshot'];
             $row['button_status'] = $this->resolveButtonStatus($row, $available, $now);
             return $row;
-        }, $result['data'] ?? []);
+        }, $listRows);
 
         return [
             'server_time' => time(),
@@ -141,6 +142,7 @@ class FlashSaleService
             ->order('id', 'desc')
             ->select()
             ->toArray();
+        $items = $this->filterUnavailableContentItems($items);
         $now = date('Y-m-d H:i:s');
         foreach ($items as &$item) {
             $available = max(0, (int)$item['total_stock'] - (int)$item['sold_stock'] - (int)$item['locked_stock']);
@@ -1281,6 +1283,62 @@ class FlashSaleService
             return 'sold_out';
         }
         return 'buy_now';
+    }
+
+    /**
+     * 过滤已下架/不存在的内容，避免前端继续对无效 goods_id 发起购买状态查询。
+     *
+     * @param array<int, array<string, mixed>> $rows
+     * @return array<int, array<string, mixed>>
+     */
+    private function filterUnavailableContentItems(array $rows): array
+    {
+        if (empty($rows)) {
+            return $rows;
+        }
+        $dramaIds = [];
+        $novelIds = [];
+        foreach ($rows as $row) {
+            $goodsType = (int)($row['goods_type'] ?? 0);
+            $goodsId = (int)($row['goods_id'] ?? 0);
+            if ($goodsType === 10 && $goodsId > 0) {
+                $dramaIds[] = $goodsId;
+            } elseif ($goodsType === 20 && $goodsId > 0) {
+                $novelIds[] = $goodsId;
+            }
+        }
+        $validDramaMap = [];
+        $validNovelMap = [];
+        if (!empty($dramaIds)) {
+            $ids = array_values(array_unique($dramaIds));
+            $validDramaMap = array_flip(array_map(
+                'intval',
+                Drama::whereIn('id', $ids)->where('status', 1)->column('id')
+            ));
+        }
+        if (!empty($novelIds)) {
+            $ids = array_values(array_unique($novelIds));
+            $validNovelMap = array_flip(array_map(
+                'intval',
+                Novel::whereIn('id', $ids)->where('status', 1)->column('id')
+            ));
+        }
+        $filtered = [];
+        foreach ($rows as $row) {
+            $goodsType = (int)($row['goods_type'] ?? 0);
+            $goodsId = (int)($row['goods_id'] ?? 0);
+            if ($goodsType === 10) {
+                if ($goodsId <= 0 || !isset($validDramaMap[$goodsId])) {
+                    continue;
+                }
+            } elseif ($goodsType === 20) {
+                if ($goodsId <= 0 || !isset($validNovelMap[$goodsId])) {
+                    continue;
+                }
+            }
+            $filtered[] = $row;
+        }
+        return $filtered;
     }
 
     private function resolveGoodsName(int $goodsType, int $goodsId): string

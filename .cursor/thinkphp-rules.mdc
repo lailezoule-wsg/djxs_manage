@@ -1,0 +1,65 @@
+---
+description: "ThinkPHP 8 多应用项目开发规范（适用于 admin / api / index 等多应用并存）"
+globs: ["app/**/*.php", "app/*/controller/**/*.php", "app/*/model/**/*.php", "app/*/logic/**/*.php", "app/*/service/**/*.php", "app/*/validate/**/*.php", "app/*/middleware/**/*.php", "config/**/*.php", "route/**/*.php"]
+alwaysApply: true
+---
+
+# ThinkPHP 8 多应用项目开发规范
+
+## 1. 框架基础与环境
+- **PHP 版本**：必须 >= 8.1，并开启 `mbstring`, `openssl`, `pdo`, `json`, `tokenizer` 扩展。
+- **编码规范**：遵循 **PSR-12** 代码风格。
+- **多应用前提**：项目已安装并启用 `topthink/think-multi-app` 扩展，并在 `config/app.php` 中开启 `'auto_multi_app' => true`。[reference:0][reference:1]
+
+## 2. 目录与命名规范
+
+### 目录结构（多应用模式）
+- **应用隔离**：每个独立应用（如 `admin`, `api`, `index`）位于 `app/` 目录下，拥有独立的 `controller`, `model`, `view`, `middleware`, `route` 等目录。[reference:2][reference:3]
+- **共享代码**：跨应用的公共逻辑、基础模型、工具类等，统一放在 `app/common/` 或 `app/common/model`、`app/common/service` 等目录中。[reference:4]
+
+### 命名规范
+- **控制器**：文件名与类名使用 **PascalCase**（如 `UserController.php`），类名 `UserController`，存放于 `app/{应用}/controller/UserController.php`。**强制使用 `validate` 或验证器类完成参数校验**，控制器中严禁直接使用 `$_POST`。[reference:5][reference:6]
+- **模型**：文件名与类名使用 **PascalCase**（如 `User.php`），类名 `User`，存放于 `app/{应用}/model/User.php`。模型层仅封装原子化的 CURD 和关联关系。[reference:7]
+- **验证器**：控制器对应的验证逻辑，放在 `app/{应用}/validate/` 目录下，以 `{场景}Validate.php` 命名（如 `UserValidate.php`）。[reference:8]
+- **服务层 / 逻辑层**：复杂的业务逻辑应封装在 `service` 或 `logic` 目录中，类名使用 **PascalCase**（如 `UserService.php`），严禁直接在控制器中堆积业务代码。[reference:9]
+- **常量与枚举**：使用 **UPPER_SNAKE_CASE** 定义（如 `STATUS_ACTIVE`）。
+
+## 3. 分层架构与数据请求
+
+### 控制器（Controller）
+- **职责**：仅负责接收请求、调用 Logic/Service 处理、返回响应（JSON 或视图）。[reference:10]
+- **返回格式**：API 接口统一返回 `JsonResponse`，并包含 `code`, `msg`, `data` 字段。
+
+### 模型（Model）与数据库
+- **ORM 操作**：必须使用模型或查询构造器，严禁字符串拼接 SQL。
+- **应用间数据库隔离**：每个应用如需连接不同数据库，请在 `config/database.php` 中配置多个连接，使用 `Db::connect('connection_name')` 切换。[reference:11]
+- **共享模型**：若多个应用需要操作同一张数据表（如 `users` 表），应将该模型放置在 `app/common/model/` 目录下，各应用控制器通过命名空间 `use app\common\Model\User` 调用，避免重复定义。[reference:12]
+
+### 验证器（Validate）
+- **强制使用**：所有用户输入必须通过验证器，控制器中不得直接使用 `$request->param()` 未经验证的数据。[reference:13]
+
+## 4. 路由规范
+
+### 路由定义
+- **应用内路由**：将路由规则定义在各应用目录下的 `route/app.php` 文件中，实现路由的模块化管理。[reference:14]
+- **路由绑定**：支持通过 `domain_bind` 将不同域名绑定到不同应用，实现入口分离。[reference:15]
+- **注解路由**：若使用 PHP 8 属性定义路由，务必在 `config/annotation.php` 中将新应用的控制器命名空间（如 `app\admin\controller`）添加到 `controllers` 数组中，否则注解路由将无法生效。[reference:16]
+
+## 5. 安全规范
+- **参数过滤**：使用验证器 + 请求变量的 `filter` 进行安全过滤。[reference:17]
+- **敏感信息**：数据库密码、API 密钥等必须通过 `.env` 环境变量注入。
+- **防 SQL 注入**：严格遵守参数绑定规则。
+- **XSS 防护**：视图输出使用 `htmlspecialchars` 或框架自带的 `e()` 函数。
+
+## 6. 性能规范
+- **N+1 查询**：在模型关联查询时，**必须使用 `with()` 预加载**，禁止在循环中执行 SQL 查询。
+- **缓存**：对于不常变化的数据（如配置、分类），使用 `Cache` 类进行缓存。
+
+## 7. 扩展与指令
+- **Composer 管理**：所有第三方依赖通过 Composer 安装。
+- **Think 命令行**：优先使用 `php think make:controller`、`php think make:model` 等官方指令生成代码。[reference:18]
+
+## 8. URL 访问规范
+- **入口文件**：统一使用 `public/index.php` 作为入口。[reference:19]
+- **伪静态**：确保 Web 服务器（Nginx/Apache）配置了 URL 重写规则，隐藏入口文件 `index.php`。
+- **应用名访问**：默认 URL 路径中包含应用名（如 `/admin/user/index`）。如需隐藏，请在 `config/app.php` 中配置 `domain_bind`，将域名绑定至应用。[reference:20]

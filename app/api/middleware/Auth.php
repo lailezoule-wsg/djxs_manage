@@ -21,6 +21,10 @@ class Auth
     {
         // 获取 token
         $token = $request->header('Authorization');
+        if (!$token) {
+            // EventSource 无法稳定附带 Authorization 头，兼容 query token/access_token
+            $token = (string)($request->get('token') ?: $request->get('access_token'));
+        }
         
         if (!$token) {
             return json([

@@ -9,6 +9,7 @@ return [
         \app\command\OrderContractCheck::class,
         \app\command\FlashSaleCleanupRisk::class,
         \app\command\FlashSaleCleanupCache::class,
+        \app\command\FlashSaleAuditItems::class,
         \app\command\FlashSaleReleaseReserve::class,
         \app\command\FlashSaleReconcile::class,
         \app\command\ContentRebuildStats::class,
