@@ -6,8 +6,14 @@ namespace app\admin\service;
 use app\common\exception\BizException;
 use think\facade\Db;
 
+/**
+ * 管理端渠道账号业务服务
+ */
 class ChannelAccountAdminService extends BaseAdminService
 {
+    /**
+     * 分页查询渠道账号列表
+     */
     public function accountList(array $params, int $page, int $pageSize): array
     {
         $query = Db::name('channel_account')->order('id', 'desc');
@@ -28,6 +34,9 @@ class ChannelAccountAdminService extends BaseAdminService
         return $result;
     }
 
+    /**
+     * 创建渠道账号
+     */
     public function accountCreate(array $payload): int
     {
         $row = $this->normalizeAccountPayload($payload, false);
@@ -35,6 +44,9 @@ class ChannelAccountAdminService extends BaseAdminService
         return (int)Db::name('channel_account')->insertGetId($row);
     }
 
+    /**
+     * 更新渠道账号
+     */
     public function accountUpdate(int $id, array $payload): void
     {
         $this->assertExists('channel_account', $id, '渠道账号不存在');
@@ -45,6 +57,9 @@ class ChannelAccountAdminService extends BaseAdminService
         Db::name('channel_account')->where('id', $id)->update($row);
     }
 
+    /**
+     * 启停渠道账号
+     */
     public function accountToggle(int $id, int $status): void
     {
         $this->assertExists('channel_account', $id, '渠道账号不存在');
@@ -57,6 +72,9 @@ class ChannelAccountAdminService extends BaseAdminService
         ]);
     }
 
+    /**
+     * 测试渠道账号配置
+     */
     public function accountTest(int $id): array
     {
         $row = Db::name('channel_account')->where('id', $id)->find();
@@ -75,6 +93,9 @@ class ChannelAccountAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 获取回调签名密钥
+     */
     public function getCallbackSecret(string $channelCode, string $accountKey = ''): string
     {
         try {

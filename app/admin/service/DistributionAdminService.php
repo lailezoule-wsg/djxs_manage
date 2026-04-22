@@ -6,8 +6,14 @@ namespace app\admin\service;
 use think\exception\ValidateException;
 use think\facade\Db;
 
+/**
+ * 管理端分销业务服务
+ */
 class DistributionAdminService extends BaseAdminService
 {
+    /**
+     * 分页查询分销关系记录
+     */
     public function recordList(int $page, int $pageSize): array
     {
         $query = Db::name('distribution')->alias('d')
@@ -17,6 +23,9 @@ class DistributionAdminService extends BaseAdminService
         return $this->paginateToArray($query->order('d.id', 'desc'), $page, $pageSize);
     }
 
+    /**
+     * 分页查询提现申请记录
+     */
     public function withdrawList(array $params, int $page, int $pageSize): array
     {
         $status = $params['status'] ?? '';
@@ -37,6 +46,9 @@ class DistributionAdminService extends BaseAdminService
         return $result;
     }
 
+    /**
+     * 审核提现申请
+     */
     public function withdrawAudit(int $id, int $status, string $remark = ''): void
     {
         $remark = trim($remark);
@@ -69,6 +81,9 @@ class DistributionAdminService extends BaseAdminService
         });
     }
 
+    /**
+     * 获取分销配置
+     */
     public function configGet(): array
     {
         $row = Db::name('system_config')->whereRaw('`key` = ?', ['distribution_config'])->find();
@@ -79,6 +94,9 @@ class DistributionAdminService extends BaseAdminService
         return is_array($decoded) ? $decoded : [];
     }
 
+    /**
+     * 保存分销配置
+     */
     public function configSet(array $data): void
     {
         $now = date('Y-m-d H:i:s');

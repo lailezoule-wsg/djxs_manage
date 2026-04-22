@@ -6,6 +6,9 @@ namespace app\api\controller;
 use app\common\controller\BaseApiController;
 use app\api\service\ConfigService;
 
+/**
+ * 用户端配置接口
+ */
 class Config extends BaseApiController
 {
     protected ConfigService $service;

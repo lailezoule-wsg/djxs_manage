@@ -7,8 +7,14 @@ use app\admin\controller\BaseAdminController;
 use app\admin\model\AdminMenu;
 use think\exception\ValidateException;
 
+/**
+ * 管理端菜单管理接口
+ */
 class Menu extends BaseAdminController
 {
+    /**
+     * 获取菜单列表
+     */
     public function list()
     {
         try {
@@ -19,6 +25,9 @@ class Menu extends BaseAdminController
         }
     }
 
+    /**
+     * 新增菜单
+     */
     public function create()
     {
         try {
@@ -46,6 +55,9 @@ class Menu extends BaseAdminController
         }
     }
 
+    /**
+     * 更新菜单
+     */
     public function update(int $id)
     {
         try {
@@ -83,6 +95,9 @@ class Menu extends BaseAdminController
         }
     }
 
+    /**
+     * 删除菜单
+     */
     public function delete(int $id)
     {
         try {

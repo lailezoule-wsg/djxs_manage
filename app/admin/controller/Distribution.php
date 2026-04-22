@@ -6,6 +6,9 @@ namespace app\admin\controller;
 use app\admin\service\DistributionAdminService;
 use think\exception\ValidateException;
 
+/**
+ * 管理端分销管理接口
+ */
 class Distribution extends BaseAdminController
 {
     protected DistributionAdminService $service;
@@ -16,6 +19,9 @@ class Distribution extends BaseAdminController
         $this->service = new DistributionAdminService();
     }
 
+    /**
+     * 分页查询佣金记录
+     */
     public function recordList()
     {
         try {
@@ -29,6 +35,9 @@ class Distribution extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询提现申请
+     */
     public function withdrawList()
     {
         try {
@@ -42,6 +51,9 @@ class Distribution extends BaseAdminController
         }
     }
 
+    /**
+     * 审核提现申请
+     */
     public function withdrawAudit(int $id)
     {
         try {
@@ -58,6 +70,9 @@ class Distribution extends BaseAdminController
         }
     }
 
+    /**
+     * 获取分销配置
+     */
     public function configGet()
     {
         try {
@@ -68,6 +83,9 @@ class Distribution extends BaseAdminController
         }
     }
 
+    /**
+     * 保存分销配置
+     */
     public function configSet()
     {
         try {

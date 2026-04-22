@@ -5,8 +5,14 @@ namespace app\admin\middleware;
 
 use app\admin\service\AdminJwtService;
 
+/**
+ * 管理端鉴权中间件
+ */
 class Auth
 {
+    /**
+     * 校验请求 token 并注入当前管理员信息
+     */
     public function handle($request, \Closure $next)
     {
         $token = (string)$request->header('Authorization', '');

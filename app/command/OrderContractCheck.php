@@ -15,6 +15,9 @@ use think\facade\Db;
  */
 class OrderContractCheck extends Command
 {
+    /**
+     * 注册命令名、描述与参数
+     */
     protected function configure()
     {
         $this->setName('order:contract-check')
@@ -23,6 +26,9 @@ class OrderContractCheck extends Command
             ->addOption('order', 'o', Option::VALUE_OPTIONAL, '指定订单ID（可选）');
     }
 
+    /**
+     * 执行订单接口字段契约检查
+     */
     protected function execute(Input $input, Output $output)
     {
         $userId = (int)$input->getOption('user');

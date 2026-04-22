@@ -13,6 +13,8 @@ return [
     // 通知地址与同步返回地址（按你的域名调整）
     'notify_url' => env('ALIPAY_NOTIFY_URL', 'http://localhost:8082/api/order/notify'),
     'return_url' => env('ALIPAY_RETURN_URL', 'http://localhost:3000/orders'),
+    // 商户号（可选；配置后将用于回调 seller_id 校验）
+    'seller_id' => env('ALIPAY_SELLER_ID', ''),
 
     // 签名类型/编码
     'sign_type' => 'RSA2',

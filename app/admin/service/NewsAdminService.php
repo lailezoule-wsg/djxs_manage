@@ -6,8 +6,14 @@ namespace app\admin\service;
 use think\exception\ValidateException;
 use think\facade\Db;
 
+/**
+ * 管理端资讯业务服务
+ */
 class NewsAdminService extends BaseAdminService
 {
+    /**
+     * 分页查询资讯列表
+     */
     public function list(array $params, int $page, int $pageSize): array
     {
         $query = Db::name('news');
@@ -35,6 +41,9 @@ class NewsAdminService extends BaseAdminService
         return $this->paginateToArray($query, $page, $pageSize);
     }
 
+    /**
+     * 创建资讯
+     */
     public function create(array $payload): int
     {
         $data = $this->normalizePayload($payload, false);
@@ -44,6 +53,9 @@ class NewsAdminService extends BaseAdminService
         return (int) $id;
     }
 
+    /**
+     * 更新资讯
+     */
     public function update(int $id, array $payload): void
     {
         $this->assertExists('news', $id, '资讯不存在');
@@ -53,6 +65,9 @@ class NewsAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 删除资讯
+     */
     public function delete(int $id): void
     {
         $this->assertExists('news', $id, '资讯不存在');

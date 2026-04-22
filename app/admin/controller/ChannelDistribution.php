@@ -9,6 +9,9 @@ use app\admin\service\ChannelDistributionAdminService;
 use app\admin\service\ChannelRegistryAdminService;
 use think\App;
 
+/**
+ * 管理端渠道分发管理接口
+ */
 class ChannelDistribution extends BaseAdminController
 {
     protected ChannelDistributionAdminService $distributionService;
@@ -25,6 +28,9 @@ class ChannelDistribution extends BaseAdminController
         $this->channelService = new ChannelRegistryAdminService();
     }
 
+    /**
+     * 分页查询分发任务列表
+     */
     public function taskList()
     {
         try {
@@ -36,6 +42,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 创建分发任务
+     */
     public function taskCreate()
     {
         try {
@@ -47,6 +56,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 获取分发任务详情
+     */
     public function taskDetail(string $taskNo)
     {
         try {
@@ -57,6 +69,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 重试分发任务
+     */
     public function taskRetry(string $taskNo)
     {
         try {
@@ -67,6 +82,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 重新提审分发任务
+     */
     public function taskResubmit(string $taskNo)
     {
         try {
@@ -78,6 +96,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 审核分发任务
+     */
     public function taskAudit(string $taskNo)
     {
         try {
@@ -89,6 +110,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 获取分发任务日志
+     */
     public function taskLogs(string $taskNo)
     {
         try {
@@ -99,6 +123,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询渠道回调列表
+     */
     public function callbackList()
     {
         try {
@@ -110,6 +137,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 获取渠道回调详情
+     */
     public function callbackDetail(int $id)
     {
         try {
@@ -120,6 +150,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询渠道账号列表
+     */
     public function accountList()
     {
         try {
@@ -131,6 +164,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 新增渠道账号
+     */
     public function accountCreate()
     {
         try {
@@ -141,6 +177,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 更新渠道账号
+     */
     public function accountUpdate(int $id)
     {
         try {
@@ -151,6 +190,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 启停渠道账号
+     */
     public function accountToggle(int $id)
     {
         try {
@@ -162,6 +204,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 测试渠道账号连通性
+     */
     public function accountTest(int $id)
     {
         try {
@@ -172,6 +217,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询渠道配置列表
+     */
     public function channelList()
     {
         try {
@@ -183,6 +231,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 获取渠道选项列表
+     */
     public function channelOptions()
     {
         try {
@@ -193,6 +244,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 新增渠道配置
+     */
     public function channelCreate()
     {
         try {
@@ -203,6 +257,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 更新渠道配置
+     */
     public function channelUpdate(int $id)
     {
         try {
@@ -213,6 +270,9 @@ class ChannelDistribution extends BaseAdminController
         }
     }
 
+    /**
+     * 启停渠道配置
+     */
     public function channelToggle(int $id)
     {
         try {

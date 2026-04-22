@@ -8,9 +8,15 @@ use app\common\exception\BizException;
 use think\facade\Cache;
 use think\facade\Db;
 
+/**
+ * 管理端渠道回调业务服务
+ */
 class ChannelCallbackAdminService extends BaseAdminService
 {
     private array $tableFieldCache = [];
+    /**
+     * 分页查询回调事件列表
+     */
     public function callbackList(array $params, int $page, int $pageSize): array
     {
         $query = Db::name('channel_callback_event')->order('id', 'desc');
@@ -29,6 +35,9 @@ class ChannelCallbackAdminService extends BaseAdminService
         return $this->paginateToArray($query, $page, $pageSize);
     }
 
+    /**
+     * 获取回调事件详情
+     */
     public function callbackDetail(int $id): array
     {
         $row = Db::name('channel_callback_event')->where('id', $id)->find();
@@ -38,6 +47,9 @@ class ChannelCallbackAdminService extends BaseAdminService
         return $row;
     }
 
+    /**
+     * 接收并校验渠道回调
+     */
     public function receive(string $channelCode, array $headers, string $rawBody): array
     {
         $channelCode = strtolower(trim($channelCode));

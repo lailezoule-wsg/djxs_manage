@@ -5,6 +5,9 @@ namespace app\admin\model;
 
 use think\Model;
 
+/**
+ * 管理端菜单模型
+ */
 class AdminMenu extends Model
 {
     protected $name = 'admin_menu';

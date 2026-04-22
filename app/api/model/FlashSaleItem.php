@@ -5,6 +5,9 @@ namespace app\api\model;
 
 use think\Model;
 
+/**
+ * 秒杀活动商品模型
+ */
 class FlashSaleItem extends Model
 {
     protected $name = 'flash_sale_item';

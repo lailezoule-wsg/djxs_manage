@@ -11,6 +11,11 @@ use Firebase\JWT\Key;
  */
 class AdminJwtService
 {
+    /**
+     * 生成管理端 JWT 令牌
+     *
+     * @param array<string, mixed> $payloadData
+     */
     public function generateToken(array $payloadData): string
     {
         $now = time();
@@ -53,6 +58,9 @@ class AdminJwtService
         return (string)(config('app.jwt_aud_admin') ?? 'djxs_admin');
     }
 
+    /**
+     * 获取管理端签名密钥（优先独立配置，其次由用户端密钥派生）
+     */
     private function getSecretKey(): string
     {
         $key = (string)(config('app.jwt_secret_admin') ?? '');

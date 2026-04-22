@@ -7,8 +7,14 @@ use app\admin\controller\BaseAdminController;
 use app\admin\model\AdminPermission;
 use think\exception\ValidateException;
 
+/**
+ * 管理端权限点管理接口
+ */
 class Permission extends BaseAdminController
 {
+    /**
+     * 获取权限点列表
+     */
     public function list()
     {
         try {
@@ -19,6 +25,9 @@ class Permission extends BaseAdminController
         }
     }
 
+    /**
+     * 新增权限点
+     */
     public function create()
     {
         try {
@@ -46,6 +55,9 @@ class Permission extends BaseAdminController
         }
     }
 
+    /**
+     * 更新权限点
+     */
     public function update(int $id)
     {
         try {
@@ -88,6 +100,9 @@ class Permission extends BaseAdminController
         }
     }
 
+    /**
+     * 删除权限点
+     */
     public function delete(int $id)
     {
         try {

@@ -288,6 +288,9 @@ class UserService
         return '9' . $tail;
     }
 
+    /**
+     * 确保用户存在分销档案（注册/三方登录后自动初始化）
+     */
     private function ensureDistributionProfile(int $userId, int $parentUserId = 0): void
     {
         if ($userId <= 0) {
@@ -311,6 +314,9 @@ class UserService
         ]);
     }
 
+    /**
+     * 生成唯一推广码
+     */
     private function generateUniquePromotionCode(): string
     {
         $chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';

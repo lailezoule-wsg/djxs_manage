@@ -10,8 +10,14 @@ use PhpAmqpLib\Message\AMQPMessage;
 use think\console\Output;
 use think\facade\Log;
 
+/**
+ * 渠道分发消息消费任务
+ */
 class ChannelDistributionConsumeJob extends BaseRabbitConsumeJob
 {
+    /**
+     * 声明队列并注册消费回调
+     */
     protected function setupConsumers(AMQPChannel $channel, array $cfg, Output $output): void
     {
         $prefetch = max(1, (int)($cfg['channel_distribution_consume_prefetch'] ?? 10));

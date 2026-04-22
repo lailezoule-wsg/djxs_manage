@@ -22,16 +22,25 @@ class AdminUser extends Model
 
     protected $hidden = ['password'];
 
+    /**
+     * 密码写入时自动加密
+     */
     public function setPasswordAttr($value): string
     {
         return password_hash((string)$value, PASSWORD_DEFAULT);
     }
 
+    /**
+     * 校验明文密码
+     */
     public function checkPassword(string $password): bool
     {
         return password_verify($password, (string)$this->password);
     }
 
+    /**
+     * 关联管理员角色
+     */
     public function roles()
     {
         return $this->belongsToMany(

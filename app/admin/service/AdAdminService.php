@@ -6,8 +6,14 @@ namespace app\admin\service;
 use think\exception\ValidateException;
 use think\facade\Db;
 
+/**
+ * 管理端广告业务服务
+ */
 class AdAdminService extends BaseAdminService
 {
+    /**
+     * 分页查询广告位
+     */
     public function positionList(array $params, int $page, int $pageSize): array
     {
         $query = Db::name('ad_position')->alias('p');
@@ -28,12 +34,18 @@ class AdAdminService extends BaseAdminService
         return $this->paginateToArray($query, $page, $pageSize);
     }
 
+    /**
+     * 创建广告位
+     */
     public function positionCreate(array $payload): int
     {
         $data = $this->normalizePositionPayload($payload, false);
         return (int)Db::name('ad_position')->insertGetId($data);
     }
 
+    /**
+     * 更新广告位
+     */
     public function positionUpdate(int $id, array $payload): void
     {
         $this->assertExists('ad_position', $id, '广告位不存在');
@@ -43,12 +55,18 @@ class AdAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 删除广告位
+     */
     public function positionDelete(int $id): void
     {
         $this->assertExists('ad_position', $id, '广告位不存在');
         Db::name('ad_position')->where('id', $id)->delete();
     }
 
+    /**
+     * 分页查询广告
+     */
     public function list(array $params, int $page, int $pageSize): array
     {
         $positionId = (int)($params['position_id'] ?? 0);
@@ -78,12 +96,18 @@ class AdAdminService extends BaseAdminService
         return $this->paginateToArray($query->order('a.id', 'desc'), $page, $pageSize);
     }
 
+    /**
+     * 创建广告
+     */
     public function create(array $payload): int
     {
         $data = $this->normalizeAdPayload($payload, false);
         return (int)Db::name('ad')->insertGetId($data);
     }
 
+    /**
+     * 更新广告
+     */
     public function update(int $id, array $payload): void
     {
         $this->assertExists('ad', $id, '广告不存在');
@@ -93,12 +117,18 @@ class AdAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 删除广告
+     */
     public function delete(int $id): void
     {
         $this->assertExists('ad', $id, '广告不存在');
         Db::name('ad')->where('id', $id)->delete();
     }
 
+    /**
+     * 获取广告统计
+     */
     public function statistics(int $id): array
     {
         $row = Db::name('ad')->where('id', $id)->find();

@@ -6,6 +6,9 @@ namespace app\admin\controller;
 use app\admin\service\ConfigAdminService;
 use think\exception\ValidateException;
 
+/**
+ * 管理端系统配置接口
+ */
 class Config extends BaseAdminController
 {
     protected ConfigAdminService $service;
@@ -16,6 +19,9 @@ class Config extends BaseAdminController
         $this->service = new ConfigAdminService();
     }
 
+    /**
+     * 获取配置项列表
+     */
     public function list()
     {
         try {
@@ -25,6 +31,9 @@ class Config extends BaseAdminController
         }
     }
 
+    /**
+     * 批量更新配置项
+     */
     public function update()
     {
         try {

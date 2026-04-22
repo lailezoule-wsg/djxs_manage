@@ -8,8 +8,14 @@ use app\admin\service\AdminJwtService;
 use app\admin\service\RbacService;
 use think\facade\Db;
 
+/**
+ * 管理端认证接口
+ */
 class Auth extends BaseAdminController
 {
+    /**
+     * 管理员登录并返回 token、权限与菜单
+     */
     public function login()
     {
         try {

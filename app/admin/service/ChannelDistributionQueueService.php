@@ -9,8 +9,14 @@ use PhpAmqpLib\Message\AMQPMessage;
 use PhpAmqpLib\Wire\AMQPTable;
 use think\facade\Log;
 
+/**
+ * 渠道分发发布队列服务
+ */
 final class ChannelDistributionQueueService
 {
+    /**
+     * 声明主队列（可选死信队列）
+     */
     public static function declareQueue(AMQPChannel $channel): string
     {
         $cfg = config('rabbitmq');
@@ -33,6 +39,9 @@ final class ChannelDistributionQueueService
         return $queue;
     }
 
+    /**
+     * 发布分发任务消息
+     */
     public static function publish(array $payload, int $delayMs = 0): bool
     {
         $cfg = config('rabbitmq');

@@ -8,6 +8,9 @@ use app\common\service\FlashSaleRealtimeService;
 use app\common\controller\BaseApiController;
 use think\App;
 
+/**
+ * 用户端秒杀活动接口
+ */
 class FlashSale extends BaseApiController
 {
     protected FlashSaleService $service;
@@ -18,6 +21,9 @@ class FlashSale extends BaseApiController
         $this->service = new FlashSaleService();
     }
 
+    /**
+     * 查询可参与秒杀活动列表
+     */
     public function list()
     {
         try {
@@ -28,6 +34,9 @@ class FlashSale extends BaseApiController
         }
     }
 
+    /**
+     * 获取秒杀活动详情
+     */
     public function detail(int $activityId)
     {
         try {
@@ -38,6 +47,9 @@ class FlashSale extends BaseApiController
         }
     }
 
+    /**
+     * 领取秒杀下单令牌
+     */
     public function token()
     {
         try {
@@ -57,6 +69,9 @@ class FlashSale extends BaseApiController
         }
     }
 
+    /**
+     * 创建秒杀订单
+     */
     public function createOrder()
     {
         try {
@@ -74,6 +89,9 @@ class FlashSale extends BaseApiController
         }
     }
 
+    /**
+     * 秒杀下单前置校验
+     */
     public function orderPrecheck()
     {
         try {
@@ -91,6 +109,9 @@ class FlashSale extends BaseApiController
         }
     }
 
+    /**
+     * 查询秒杀请求结果
+     */
     public function orderResult(string $requestId)
     {
         try {
@@ -105,6 +126,9 @@ class FlashSale extends BaseApiController
         }
     }
 
+    /**
+     * 拉取秒杀实时事件流（SSE）
+     */
     public function stream()
     {
         $timeout = max(5, min(30, (int)$this->request->get('timeout', 25)));

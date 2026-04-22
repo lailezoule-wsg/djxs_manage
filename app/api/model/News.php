@@ -5,6 +5,9 @@ namespace app\api\model;
 
 use think\Model;
 
+/**
+ * 资讯模型
+ */
 class News extends Model
 {
     protected $name = 'news';

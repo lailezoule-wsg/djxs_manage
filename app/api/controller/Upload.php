@@ -7,8 +7,14 @@ use app\common\controller\BaseApiController;
 use think\exception\ValidateException;
 use think\facade\Filesystem;
 
+/**
+ * 用户端上传接口
+ */
 class Upload extends BaseApiController
 {
+    /**
+     * 上传用户图片（头像等）
+     */
     public function image()
     {
         try {

@@ -75,6 +75,9 @@ class Order extends BaseApiController
         }
     }
 
+    /**
+     * 检查会员是否具备内容访问权限
+     */
     public function checkMemberAccess()
     {
         try {

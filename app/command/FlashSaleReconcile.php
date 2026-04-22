@@ -14,6 +14,9 @@ use think\console\Output;
  */
 class FlashSaleReconcile extends Command
 {
+    /**
+     * 注册命令名、描述与参数
+     */
     protected function configure()
     {
         $this->setName('flash-sale:reconcile')
@@ -21,6 +24,9 @@ class FlashSaleReconcile extends Command
             ->addOption('limit', 'l', Option::VALUE_OPTIONAL, '单次处理商品数', '200');
     }
 
+    /**
+     * 执行秒杀对账修复
+     */
     protected function execute(Input $input, Output $output)
     {
         $limit = max(1, min(2000, (int)$input->getOption('limit')));

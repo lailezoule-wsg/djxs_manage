@@ -6,8 +6,14 @@ namespace app\api\service;
 use app\api\model\News;
 use think\exception\ValidateException;
 
+/**
+ * 用户端资讯业务服务
+ */
 class NewsService
 {
+    /**
+     * 分页查询已发布资讯
+     */
     public function list(array $params = []): array
     {
         $page = max(1, (int) ($params['page'] ?? 1));
@@ -44,6 +50,9 @@ class NewsService
         ];
     }
 
+    /**
+     * 获取资讯详情并累加浏览量
+     */
     public function detail(int $id): array
     {
         if ($id < 1) {

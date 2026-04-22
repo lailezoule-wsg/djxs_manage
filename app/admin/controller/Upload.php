@@ -5,8 +5,14 @@ namespace app\admin\controller;
 
 use think\facade\Filesystem;
 
+/**
+ * 管理端文件上传接口
+ */
 class Upload extends BaseAdminController
 {
+    /**
+     * 上传新闻内容图片
+     */
     public function image()
     {
         try {

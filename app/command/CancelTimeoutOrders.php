@@ -14,6 +14,9 @@ use think\console\Output;
  */
 class CancelTimeoutOrders extends Command
 {
+    /**
+     * 注册命令名、描述与参数
+     */
     protected function configure()
     {
         $this->setName('order:cancel-timeout')
@@ -22,6 +25,9 @@ class CancelTimeoutOrders extends Command
             ->addOption('grace', 'g', Option::VALUE_OPTIONAL, '临界点缓冲秒数', (string)env('ORDER_TIMEOUT_GRACE_SECONDS', '120'));
     }
 
+    /**
+     * 执行超时订单取消任务
+     */
     protected function execute(Input $input, Output $output)
     {
         $timeout = max(1, (int)$input->getOption('timeout'));

@@ -6,8 +6,14 @@ namespace app\admin\service;
 use think\exception\ValidateException;
 use think\facade\Db;
 
+/**
+ * 管理端用户业务服务
+ */
 class UserAdminService extends BaseAdminService
 {
+    /**
+     * 分页查询用户列表
+     */
     public function list(array $params, int $page, int $pageSize): array
     {
         $mobile = trim((string)($params['mobile'] ?? ''));
@@ -38,6 +44,9 @@ class UserAdminService extends BaseAdminService
         return $result;
     }
 
+    /**
+     * 获取用户详情
+     */
     public function detail(int $id): array
     {
         $row = Db::name('user')->alias('u')
@@ -53,12 +62,18 @@ class UserAdminService extends BaseAdminService
         return $row;
     }
 
+    /**
+     * 更新用户状态
+     */
     public function updateStatus(int $id, int $status): void
     {
         $this->assertExists('user', $id, '用户不存在');
         Db::name('user')->where('id', $id)->update(['status' => $status]);
     }
 
+    /**
+     * 分页查询设备列表
+     */
     public function deviceList(array $params, int $page, int $pageSize): array
     {
         $userId = (int)($params['user_id'] ?? 0);
@@ -71,6 +86,9 @@ class UserAdminService extends BaseAdminService
         return $this->paginateToArray($query->order('d.id', 'desc'), $page, $pageSize);
     }
 
+    /**
+     * 删除设备
+     */
     public function deviceDelete(int $id): void
     {
         $this->assertExists('device', $id, '设备不存在');

@@ -6,6 +6,9 @@ namespace app\admin\controller;
 use app\admin\service\UserAdminService;
 use think\exception\ValidateException;
 
+/**
+ * 管理端用户管理接口
+ */
 class User extends BaseAdminController
 {
     protected UserAdminService $service;
@@ -16,6 +19,9 @@ class User extends BaseAdminController
         $this->service = new UserAdminService();
     }
 
+    /**
+     * 分页查询用户列表
+     */
     public function list()
     {
         try {
@@ -29,6 +35,9 @@ class User extends BaseAdminController
         }
     }
 
+    /**
+     * 获取用户详情
+     */
     public function detail(int $id)
     {
         try {
@@ -41,6 +50,9 @@ class User extends BaseAdminController
         }
     }
 
+    /**
+     * 更新用户状态
+     */
     public function updateStatus(int $id)
     {
         try {
@@ -56,6 +68,9 @@ class User extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询用户设备列表
+     */
     public function deviceList()
     {
         try {
@@ -69,6 +84,9 @@ class User extends BaseAdminController
         }
     }
 
+    /**
+     * 删除设备记录
+     */
     public function deviceDelete(int $id)
     {
         try {

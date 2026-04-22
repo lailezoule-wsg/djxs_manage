@@ -10,8 +10,14 @@ use PhpAmqpLib\Message\AMQPMessage;
 use think\console\Output;
 use think\facade\Log;
 
+/**
+ * 秒杀下单消息消费任务
+ */
 class FlashSaleOrderConsumeJob extends BaseRabbitConsumeJob
 {
+    /**
+     * 声明队列并注册消费回调
+     */
     protected function setupConsumers(AMQPChannel $channel, array $cfg, Output $output): void
     {
         $consumeQueues = FlashSaleOrderQueueService::resolveConsumeQueues();

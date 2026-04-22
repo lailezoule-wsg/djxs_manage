@@ -23,13 +23,17 @@ class User extends Model
     // 隐藏字段
     protected $hidden = ['password', 'salt'];
 
-    // 密码加密
+    /**
+     * 密码写入时自动加密
+     */
     public function setPasswordAttr($value)
     {
         return password_hash($value, PASSWORD_DEFAULT);
     }
 
-    // 验证密码
+    /**
+     * 校验明文密码
+     */
     public function checkPassword($password)
     {
         return password_verify($password, $this->password);

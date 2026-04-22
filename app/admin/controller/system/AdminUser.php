@@ -9,13 +9,22 @@ use app\admin\service\RbacService;
 use think\exception\ValidateException;
 use think\facade\Db;
 
+/**
+ * 管理端管理员账号管理接口
+ */
 class AdminUser extends BaseAdminController
 {
+    /**
+     * 获取 RBAC 服务实例
+     */
     private function rbac(): RbacService
     {
         return new RbacService();
     }
 
+    /**
+     * 分页查询管理员列表
+     */
     public function list()
     {
         try {
@@ -83,6 +92,9 @@ class AdminUser extends BaseAdminController
         }
     }
 
+    /**
+     * 新增管理员账号
+     */
     public function create()
     {
         try {
@@ -111,6 +123,9 @@ class AdminUser extends BaseAdminController
         }
     }
 
+    /**
+     * 更新管理员账号信息
+     */
     public function update(int $id)
     {
         try {
@@ -145,6 +160,9 @@ class AdminUser extends BaseAdminController
         }
     }
 
+    /**
+     * 删除管理员账号
+     */
     public function delete(int $id)
     {
         try {
@@ -165,6 +183,9 @@ class AdminUser extends BaseAdminController
         }
     }
 
+    /**
+     * 获取管理员角色分配
+     */
     public function roles(int $id)
     {
         try {
@@ -183,6 +204,9 @@ class AdminUser extends BaseAdminController
         }
     }
 
+    /**
+     * 保存管理员角色分配
+     */
     public function saveRoles(int $id)
     {
         try {

@@ -7,8 +7,14 @@ use app\api\service\OrderService;
 use think\exception\ValidateException;
 use think\facade\Db;
 
+/**
+ * 管理端订单业务服务
+ */
 class OrderAdminService extends BaseAdminService
 {
+    /**
+     * 分页查询订单列表
+     */
     public function list(array $params, int $page, int $pageSize): array
     {
         $status = $params['status'] ?? '';
@@ -107,6 +113,9 @@ class OrderAdminService extends BaseAdminService
         unset($row);
     }
 
+    /**
+     * 获取订单详情（含商品明细）
+     */
     public function detail(int $id): array
     {
         $order = Db::name('order')->alias('o')
@@ -152,6 +161,9 @@ class OrderAdminService extends BaseAdminService
         };
     }
 
+    /**
+     * 标记订单退款状态
+     */
     public function refund(int $id): void
     {
         $order = Db::name('order')->where('id', $id)->find();
@@ -168,6 +180,9 @@ class OrderAdminService extends BaseAdminService
         Db::name('order')->where('id', $id)->update($update);
     }
 
+    /**
+     * 获取订单统计概览
+     */
     public function statistics(): array
     {
         return [
@@ -180,6 +195,9 @@ class OrderAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 查询超时关单任务状态
+     */
     public function timeoutJobStatus(): array
     {
         $service = new OrderService();

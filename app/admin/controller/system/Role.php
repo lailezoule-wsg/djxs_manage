@@ -9,8 +9,14 @@ use app\admin\service\RbacService;
 use think\exception\ValidateException;
 use think\facade\Db;
 
+/**
+ * 管理端角色管理接口
+ */
 class Role extends BaseAdminController
 {
+    /**
+     * 获取角色列表
+     */
     public function list()
     {
         try {
@@ -25,6 +31,9 @@ class Role extends BaseAdminController
         }
     }
 
+    /**
+     * 新增角色
+     */
     public function create()
     {
         try {
@@ -52,6 +61,9 @@ class Role extends BaseAdminController
         }
     }
 
+    /**
+     * 更新角色
+     */
     public function update(int $id)
     {
         try {
@@ -88,6 +100,9 @@ class Role extends BaseAdminController
         }
     }
 
+    /**
+     * 删除角色
+     */
     public function delete(int $id)
     {
         try {
@@ -110,6 +125,9 @@ class Role extends BaseAdminController
         }
     }
 
+    /**
+     * 获取角色权限分配
+     */
     public function permissions(int $id)
     {
         try {
@@ -127,6 +145,9 @@ class Role extends BaseAdminController
         }
     }
 
+    /**
+     * 保存角色权限分配
+     */
     public function savePermissions(int $id)
     {
         try {

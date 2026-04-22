@@ -5,8 +5,14 @@ namespace app\admin\controller;
 
 use think\facade\Db;
 
+/**
+ * 管理端仪表盘接口
+ */
 class Dashboard extends BaseAdminController
 {
+    /**
+     * 获取首页核心统计数据
+     */
     public function overview()
     {
         try {

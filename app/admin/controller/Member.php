@@ -6,6 +6,9 @@ namespace app\admin\controller;
 use app\admin\service\MemberAdminService;
 use think\exception\ValidateException;
 
+/**
+ * 管理端会员管理接口
+ */
 class Member extends BaseAdminController
 {
     protected MemberAdminService $service;
@@ -16,6 +19,9 @@ class Member extends BaseAdminController
         $this->service = new MemberAdminService();
     }
 
+    /**
+     * 分页查询会员等级列表
+     */
     public function levelList()
     {
         try {
@@ -27,6 +33,9 @@ class Member extends BaseAdminController
         }
     }
 
+    /**
+     * 新增会员等级
+     */
     public function levelCreate()
     {
         try {
@@ -37,6 +46,9 @@ class Member extends BaseAdminController
         }
     }
 
+    /**
+     * 更新会员等级
+     */
     public function levelUpdate(int $id)
     {
         try {
@@ -49,6 +61,9 @@ class Member extends BaseAdminController
         }
     }
 
+    /**
+     * 删除会员等级
+     */
     public function levelDelete(int $id)
     {
         try {
@@ -61,6 +76,9 @@ class Member extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询会员用户列表
+     */
     public function userList()
     {
         try {

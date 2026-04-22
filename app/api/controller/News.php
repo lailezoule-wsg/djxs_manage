@@ -7,6 +7,9 @@ use app\api\service\NewsService;
 use app\common\controller\BaseApiController;
 use think\App;
 
+/**
+ * 用户端资讯接口
+ */
 class News extends BaseApiController
 {
     protected NewsService $newsService;
@@ -17,6 +20,9 @@ class News extends BaseApiController
         $this->newsService = new NewsService();
     }
 
+    /**
+     * 分页查询资讯列表
+     */
     public function list()
     {
         try {
@@ -29,6 +35,9 @@ class News extends BaseApiController
         }
     }
 
+    /**
+     * 获取资讯详情
+     */
     public function detail(int $id)
     {
         try {

@@ -14,6 +14,9 @@ use think\facade\Log;
  */
 final class FlashSaleOrderQueueService
 {
+    /**
+     * 声明秒杀下单队列
+     */
     public static function declareQueue(AMQPChannel $channel, ?string $queueName = null): string
     {
         $queue = $queueName ?: self::resolveQueueName();
@@ -22,6 +25,11 @@ final class FlashSaleOrderQueueService
     }
 
     /**
+     * @return array<int, string>
+     */
+    /**
+     * 解析消费端应监听的队列列表
+     *
      * @return array<int, string>
      */
     public static function resolveConsumeQueues(): array
@@ -42,6 +50,9 @@ final class FlashSaleOrderQueueService
         return $queues;
     }
 
+    /**
+     * 根据分片规则解析发布目标队列
+     */
     public static function resolveQueueName(array $payload = []): string
     {
         $cfg = config('rabbitmq');
@@ -58,6 +69,9 @@ final class FlashSaleOrderQueueService
         return $baseQueue . '.s' . $shard;
     }
 
+    /**
+     * 发布秒杀下单消息
+     */
     public static function publish(array $payload): bool
     {
         $cfg = config('rabbitmq');

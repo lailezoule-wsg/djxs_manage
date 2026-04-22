@@ -13,12 +13,18 @@ use think\console\Output;
  */
 class FlashSaleCleanupRisk extends Command
 {
+    /**
+     * 注册命令名与描述
+     */
     protected function configure()
     {
         $this->setName('flash-sale:cleanup-risk')
             ->setDescription('清理超出保留期的秒杀风控日志');
     }
 
+    /**
+     * 执行风控日志清理任务
+     */
     protected function execute(Input $input, Output $output)
     {
         $service = new FlashSaleAdminService();

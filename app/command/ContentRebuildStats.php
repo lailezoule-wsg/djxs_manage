@@ -14,6 +14,9 @@ use think\console\Output;
  */
 class ContentRebuildStats extends Command
 {
+    /**
+     * 注册命令名、描述与参数
+     */
     protected function configure()
     {
         $this->setName('content:rebuild-stats')
@@ -22,6 +25,9 @@ class ContentRebuildStats extends Command
             ->addOption('dry-run', null, Option::VALUE_NONE, '仅统计，不落库');
     }
 
+    /**
+     * 执行展示统计重建任务
+     */
     protected function execute(Input $input, Output $output)
     {
         $limit = max(1, min(5000, (int)$input->getOption('limit')));

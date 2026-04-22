@@ -5,6 +5,9 @@ namespace app\api\service;
 
 use think\facade\Db;
 
+/**
+ * 用户端公共配置服务
+ */
 class ConfigService
 {
     /**

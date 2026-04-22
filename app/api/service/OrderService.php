@@ -12,6 +12,7 @@ use app\api\model\Novel;
 use app\api\model\NovelChapter;
 use app\api\model\MemberLevel;
 use app\api\model\Member;
+use app\api\model\User;
 use app\api\validate\Order as OrderValidate;
 use think\exception\ValidateException;
 use think\facade\Cache;
@@ -30,6 +31,9 @@ class OrderService
     protected AlipayService $alipayService;
     protected FlashSaleService $flashSaleService;
 
+    /**
+     * 初始化支付与秒杀依赖服务
+     */
     public function __construct()
     {
         $this->alipayService = new AlipayService();
@@ -215,31 +219,104 @@ class OrderService
         if ($price <= 0) {
             throw new ValidateException('商品价格不能为0');
         }
+        $matchers = ContentPurchaseMatcher::orderGoodsMatchers((int)$realGoodsType, (int)$realGoodsId);
+        return Db::transaction(function () use (
+            $userId,
+            $price,
+            $goodsName,
+            $realGoodsType,
+            $realGoodsId,
+            $matchers
+        ) {
+            // 串行化同一用户下单，避免并发请求绕过去重校验创建重复待支付单
+            $lockedUser = User::where('id', (int)$userId)->lock(true)->find();
+            if (!$lockedUser) {
+                throw new ValidateException('用户不存在');
+            }
 
-        $orderSn = 'ORD' . date('YmdHis') . rand(1000, 9999);
+            if ($this->hasOrderByStatusWithMatchers((int)$userId, 0, $matchers)) {
+                throw new ValidateException('您已存在该商品的待支付订单，请先完成支付');
+            }
+            if ($this->hasOrderByStatusWithMatchers((int)$userId, 1, $matchers)) {
+                throw new ValidateException('您已购买过该商品，无需重复购买');
+            }
 
-        $order = Order::create([
-            'order_sn'     => $orderSn,
-            'user_id'      => $userId,
-            'total_amount' => $price,
-            'pay_amount'   => $price,
-            'status'       => 0,
-        ]);
+            $order = Order::create([
+                'order_sn'     => $this->generateUniqueOrderSn(),
+                'user_id'      => (int)$userId,
+                'total_amount' => $price,
+                'pay_amount'   => $price,
+                'status'       => 0,
+                'pending_lock_key' => $this->buildPendingLockKey((int)$userId, (int)$realGoodsType, (int)$realGoodsId),
+            ]);
 
-        OrderGoods::create([
-            'order_id'   => $order->id,
-            'goods_type' => $realGoodsType,
-            'goods_id'   => $realGoodsId,
-            'goods_name' => $goodsName,
-            'price'      => $price,
-            'quantity'   => 1,
-        ]);
+            OrderGoods::create([
+                'order_id'   => $order->id,
+                'goods_type' => $realGoodsType,
+                'goods_id'   => $realGoodsId,
+                'goods_name' => $goodsName,
+                'price'      => $price,
+                'quantity'   => 1,
+            ]);
 
-        return $order;
+            return $order;
+        });
+    }
+
+    /**
+     * 检查给定商品匹配条件下是否存在指定状态订单
+     *
+     * @param array<int, array{goods_type:int, goods_id:int}> $matchers
+     */
+    private function hasOrderByStatusWithMatchers(int $userId, int $status, array $matchers): bool
+    {
+        if ($userId <= 0 || empty($matchers)) {
+            return false;
+        }
+
+        $count = Order::alias('o')
+            ->join('djxs_order_goods g', 'o.id = g.order_id')
+            ->where('o.user_id', $userId)
+            ->where('o.status', $status)
+            ->where(function ($query) use ($matchers) {
+                ContentPurchaseMatcher::applyOrderGoodsMatchersWhere($query, 'g', $matchers);
+            })
+            ->lock(true)
+            ->count();
+
+        return $count > 0;
+    }
+
+    /**
+     * 生成高熵且不重复的订单号
+     */
+    private function generateUniqueOrderSn(): string
+    {
+        for ($i = 0; $i < 5; $i++) {
+            $suffix = strtoupper(bin2hex(random_bytes(4)));
+            $orderSn = 'ORD' . date('YmdHis') . $suffix;
+            $exists = Order::where('order_sn', $orderSn)->lock(true)->count() > 0;
+            if (!$exists) {
+                return $orderSn;
+            }
+        }
+
+        throw new ValidateException('订单创建失败，请稍后重试');
+    }
+
+    /**
+     * 构造“同用户同商品待支付防重键”
+     */
+    private function buildPendingLockKey(int $userId, int $goodsType, int $goodsId): string
+    {
+        return 'u:' . $userId . '|g:' . $goodsType . ':' . $goodsId;
     }
 
     /**
      * 获取订单列表
+     */
+    /**
+     * 分页查询用户订单列表
      */
     public function list($userId, $params = [])
     {
@@ -276,6 +353,9 @@ class OrderService
     /**
      * 获取订单详情
      */
+    /**
+     * 获取用户订单详情
+     */
     public function detail($userId, $id)
     {
         $order = Order::where('user_id', $userId)->where('id', $id)->find();
@@ -287,6 +367,9 @@ class OrderService
 
     /**
      * 支付成功回调
+     */
+    /**
+     * 处理支付成功通知（兼容旧入口）
      */
     public function notify($orderSn, $payType)
     {
@@ -310,6 +393,9 @@ class OrderService
 
     /**
      * 检查并取消超时订单
+     */
+    /**
+     * 执行超时未支付订单取消
      */
     public function cancelTimeoutOrders(int $timeout = 30, int $graceSeconds = 120): array
     {
@@ -419,6 +505,10 @@ class OrderService
 
     private function buildOrderUpdateData(array $data): array
     {
+        if (array_key_exists('status', $data) && (int)$data['status'] !== 0) {
+            // 订单离开待支付状态后释放防重键，允许后续重新下单
+            $data['pending_lock_key'] = null;
+        }
         if ($this->hasOrderUpdateTimeField() && !array_key_exists('update_time', $data)) {
             $data['update_time'] = date('Y-m-d H:i:s');
         }
@@ -448,6 +538,9 @@ class OrderService
 
     /**
      * 支付订单
+     */
+    /**
+     * 获取订单支付参数
      */
     public function pay($userId, $id, $payType = null)
     {
@@ -486,6 +579,9 @@ class OrderService
 
     /**
      * 获取支付参数或支付跳转链接
+     */
+    /**
+     * 构建第三方支付参数
      */
     public function getPayParams($order, $payType = 'wechat')
     {
@@ -539,6 +635,9 @@ class OrderService
     /**
      * 取消订单
      */
+    /**
+     * 用户主动取消订单
+     */
     public function cancel($userId, $id)
     {
         $order = Order::where('user_id', $userId)->where('id', $id)->find();
@@ -562,6 +661,9 @@ class OrderService
      * @param int $goodsType 商品类型
      * @param int $goodsId 商品ID
      * @return array
+     */
+    /**
+     * 检查内容购买状态
      */
     public function checkPurchased($userId, $goodsType, $goodsId)
     {
@@ -679,6 +781,9 @@ class OrderService
         return $goods;
     }
 
+    /**
+     * 检查会员访问权限
+     */
     public function checkMemberAccess($userId, $goodsType, $goodsId)
     {
         $member = Member::where('user_id', $userId)
@@ -735,6 +840,9 @@ class OrderService
     /**
      * 处理支付回调（幂等 + 金额校验 + 状态机迁移）
      */
+    /**
+     * 统一处理支付回调
+     */
     public function processNotify(array $data, string $clientIp = ''): array
     {
         $orderSn = (string)($data['order_sn'] ?? $data['out_trade_no'] ?? '');
@@ -761,6 +869,9 @@ class OrderService
         if ($isAlipayNotify) {
             if (!$this->alipayService->verifyNotify($data)) {
                 return ['success' => false, 'msg' => '支付宝回调验签失败'];
+            }
+            if (!$this->checkAlipayNotifyBusiness($data)) {
+                return ['success' => false, 'msg' => '支付宝回调商户参数不匹配'];
             }
             $payTypeRaw = 'alipay';
         } else {
@@ -797,7 +908,6 @@ class OrderService
             }
 
             if ((int)$order->status === 1) {
-                $this->grantOrderBenefits($order);
                 $this->flashSaleService->handleOrderPaid((int)$order->id);
                 return ['success' => true, 'msg' => '订单已处理'];
             }
@@ -1049,6 +1159,31 @@ class OrderService
         return hash_equals(strtolower($expected), strtolower($sign));
     }
 
+    /**
+     * 校验支付宝回调业务参数（app_id/seller_id）
+     */
+    private function checkAlipayNotifyBusiness(array $data): bool
+    {
+        $expectedAppId = trim((string)config('alipay.app_id', ''));
+        $notifyAppId = trim((string)($data['app_id'] ?? ''));
+        if ($expectedAppId !== '') {
+            if ($notifyAppId === '' || $notifyAppId !== $expectedAppId) {
+                return false;
+            }
+        }
+
+        $expectedSellerId = trim((string)config('alipay.seller_id', ''));
+        if ($expectedSellerId === '') {
+            return true;
+        }
+        $notifySellerId = trim((string)($data['seller_id'] ?? ''));
+        if ($notifySellerId === '') {
+            return false;
+        }
+
+        return $notifySellerId === $expectedSellerId;
+    }
+
     private function getNotifyReplayTtlSeconds(): int
     {
         $ttl = (int)env('PAY_NOTIFY_REPLAY_TTL_SECONDS', 86400);
@@ -1197,6 +1332,9 @@ class OrderService
 
     /**
      * 获取订单超时任务最近执行状态
+     */
+    /**
+     * 获取超时任务最近运行状态
      */
     public function getTimeoutJobStatus(): array
     {

@@ -14,6 +14,9 @@ use think\exception\ValidateException;
 use think\facade\Cache;
 use think\facade\Db;
 
+/**
+ * 用户端秒杀业务服务
+ */
 class FlashSaleService
 {
     private const TOKEN_CACHE_PREFIX = 'flash:sale:token:';
@@ -28,6 +31,9 @@ class FlashSaleService
 
     /**
      * 用户端活动列表
+     */
+    /**
+     * 获取秒杀活动列表
      */
     public function list(array $params = []): array
     {
@@ -105,6 +111,9 @@ class FlashSaleService
         ];
     }
 
+    /**
+     * 获取秒杀活动详情
+     */
     public function detail(int $activityId): array
     {
         $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
@@ -140,6 +149,9 @@ class FlashSaleService
         ];
     }
 
+    /**
+     * 签发秒杀下单令牌
+     */
     public function issueToken(int $userId, int $activityId, int $itemId): array
     {
         $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
@@ -158,6 +170,9 @@ class FlashSaleService
         ];
     }
 
+    /**
+     * 秒杀下单前置校验
+     */
     public function precheck(int $userId, array $payload): array
     {
         $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
@@ -225,6 +240,9 @@ class FlashSaleService
         ]);
     }
 
+    /**
+     * 创建秒杀订单请求
+     */
     public function createOrder(int $userId, array $payload): array
     {
         $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
@@ -421,6 +439,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 消费秒杀下单消息
+     */
     public function consumeCreateOrderMessage(array $payload): void
     {
         $requestId = trim((string)($payload['request_id'] ?? ''));
@@ -534,6 +555,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 查询秒杀请求处理结果
+     */
     public function result(int $userId, string $requestId): array
     {
         $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
@@ -584,6 +608,9 @@ class FlashSaleService
         ];
     }
 
+    /**
+     * 处理秒杀订单支付成功
+     */
     public function handleOrderPaid(int $orderId): void
     {
         if ($orderId <= 0) {
@@ -617,6 +644,9 @@ class FlashSaleService
         });
     }
 
+    /**
+     * 处理秒杀订单取消
+     */
     public function handleOrderCanceled(int $orderId, bool $timeout = false): void
     {
         if ($orderId <= 0) {
@@ -649,6 +679,9 @@ class FlashSaleService
         });
     }
 
+    /**
+     * 释放超时预留库存
+     */
     public function releaseDueReserveOrders(int $limit = 100): int
     {
         $limit = max(1, min(500, $limit));
@@ -706,6 +739,9 @@ class FlashSaleService
         return $released;
     }
 
+    /**
+     * 秒杀订单与库存对账
+     */
     public function reconcile(int $limit = 200): array
     {
         $limit = max(1, min(2000, $limit));
@@ -752,6 +788,9 @@ class FlashSaleService
         ];
     }
 
+    /**
+     * 清理过期库存缓存
+     */
     public function cleanupExpiredStockCache(int $graceHours = 24, int $activityLimit = 200, bool $dryRun = false): array
     {
         $graceHours = max(1, min(720, $graceHours));

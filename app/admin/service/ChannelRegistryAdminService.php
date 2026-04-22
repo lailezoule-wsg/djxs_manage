@@ -7,6 +7,9 @@ use app\admin\service\channel\ChannelAdapterFactory;
 use app\common\exception\BizException;
 use think\facade\Db;
 
+/**
+ * 管理端渠道注册表业务服务
+ */
 class ChannelRegistryAdminService extends BaseAdminService
 {
     private const DEFAULT_CHANNELS = [
@@ -16,6 +19,9 @@ class ChannelRegistryAdminService extends BaseAdminService
         ['id' => 4, 'channel_code' => 'xiaohongshu', 'channel_name' => '小红书', 'status' => 1, 'sort' => 40],
     ];
 
+    /**
+     * 分页查询渠道配置
+     */
     public function list(array $params, int $page, int $pageSize): array
     {
         if (!$this->tableExists()) {
@@ -36,6 +42,9 @@ class ChannelRegistryAdminService extends BaseAdminService
         return $this->paginateToArray($query, $page, $pageSize);
     }
 
+    /**
+     * 获取启用渠道选项
+     */
     public function options(): array
     {
         if (!$this->tableExists()) {
@@ -58,6 +67,9 @@ class ChannelRegistryAdminService extends BaseAdminService
         return $rows;
     }
 
+    /**
+     * 创建渠道配置
+     */
     public function create(array $payload): int
     {
         $this->assertTableReady();
@@ -66,6 +78,9 @@ class ChannelRegistryAdminService extends BaseAdminService
         return (int)Db::name('channel_registry')->insertGetId($data);
     }
 
+    /**
+     * 更新渠道配置
+     */
     public function update(int $id, array $payload): void
     {
         $this->assertTableReady();
@@ -77,6 +92,9 @@ class ChannelRegistryAdminService extends BaseAdminService
         Db::name('channel_registry')->where('id', $id)->update($data);
     }
 
+    /**
+     * 启停渠道配置
+     */
     public function toggle(int $id, int $status): void
     {
         $this->assertTableReady();

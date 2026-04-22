@@ -14,6 +14,9 @@ use think\console\Output;
  */
 class FlashSaleCleanupCache extends Command
 {
+    /**
+     * 注册命令名、描述与参数
+     */
     protected function configure()
     {
         $this->setName('flash-sale:cleanup-cache')
@@ -23,6 +26,9 @@ class FlashSaleCleanupCache extends Command
             ->addOption('dry-run', null, Option::VALUE_NONE, '仅统计不删除');
     }
 
+    /**
+     * 执行秒杀缓存清理任务
+     */
     protected function execute(Input $input, Output $output)
     {
         $graceHours = max(1, min(720, (int)$input->getOption('grace-hours')));

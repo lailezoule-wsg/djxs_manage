@@ -210,6 +210,9 @@ class DistributionService
         return '/register?code=' . urlencode($code);
     }
 
+    /**
+     * 读取分销系统配置
+     */
     private function getDistributionConfig(): array
     {
         $row = Db::name('system_config')->whereRaw('`key` = ?', ['distribution_config'])->find();

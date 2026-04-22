@@ -19,7 +19,9 @@ class NovelChapter extends Model
     // 自动时间戳
     protected $autoWriteTimestamp = true;
 
-    // 关联小说
+    /**
+     * 关联小说
+     */
     public function novel()
     {
         return $this->belongsTo(Novel::class, 'novel_id', 'id');

@@ -7,6 +7,9 @@ use app\api\model\Member;
 use app\api\model\MemberLevel;
 use think\exception\ValidateException;
 
+/**
+ * 用户端会员业务服务
+ */
 class MemberService
 {
     const PRIVILEGE_FREE_WATCH = 'free_watch';

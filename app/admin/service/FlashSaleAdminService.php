@@ -7,6 +7,9 @@ use app\common\service\FlashSaleRealtimeService;
 use think\exception\ValidateException;
 use think\facade\Db;
 
+/**
+ * 管理端秒杀业务服务
+ */
 class FlashSaleAdminService extends BaseAdminService
 {
     private const EXPORT_TASK_DIR = 'flash_sale_export_tasks';
@@ -17,6 +20,9 @@ class FlashSaleAdminService extends BaseAdminService
     private static array $tableExistsCache = [];
     private static ?array $riskThresholdCache = null;
 
+    /**
+     * 分页查询活动
+     */
     public function activityList(array $params, int $page, int $pageSize): array
     {
         $query = Db::name('flash_sale_activity');
@@ -48,6 +54,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $result;
     }
 
+    /**
+     * 创建活动
+     */
     public function activityCreate(array $payload): int
     {
         $data = $this->normalizeActivity($payload, false);
@@ -57,6 +66,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $id;
     }
 
+    /**
+     * 更新活动
+     */
     public function activityUpdate(int $id, array $payload): void
     {
         $this->assertExists('flash_sale_activity', $id, '活动不存在');
@@ -67,6 +79,9 @@ class FlashSaleAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 发布活动
+     */
     public function activityPublish(int $id): void
     {
         $this->assertExists('flash_sale_activity', $id, '活动不存在');
@@ -77,6 +92,9 @@ class FlashSaleAdminService extends BaseAdminService
         $this->publishRealtimeEvent('activity_published', ['activity_id' => $id]);
     }
 
+    /**
+     * 关闭活动
+     */
     public function activityClose(int $id): void
     {
         $this->assertExists('flash_sale_activity', $id, '活动不存在');
@@ -87,6 +105,9 @@ class FlashSaleAdminService extends BaseAdminService
         $this->publishRealtimeEvent('activity_closed', ['activity_id' => $id]);
     }
 
+    /**
+     * 批量更新活动状态
+     */
     public function activityBatchStatus(array $payload): int
     {
         $idsRaw = $payload['ids'] ?? [];
@@ -118,6 +139,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $affected;
     }
 
+    /**
+     * 复制活动
+     */
     public function activityCopy(int $id, int $adminId): int
     {
         $source = Db::name('flash_sale_activity')->where('id', $id)->find();
@@ -166,6 +190,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $newId;
     }
 
+    /**
+     * 批量复制活动
+     */
     public function activityBatchCopy(array $payload, int $adminId): array
     {
         $idsRaw = $payload['ids'] ?? [];

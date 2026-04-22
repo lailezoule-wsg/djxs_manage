@@ -6,6 +6,9 @@ namespace app\admin\controller;
 use app\admin\service\AdAdminService;
 use think\exception\ValidateException;
 
+/**
+ * 管理端广告管理接口
+ */
 class Ad extends BaseAdminController
 {
     protected AdAdminService $service;
@@ -16,6 +19,9 @@ class Ad extends BaseAdminController
         $this->service = new AdAdminService();
     }
 
+    /**
+     * 分页查询广告位列表
+     */
     public function positionList()
     {
         try {
@@ -27,6 +33,9 @@ class Ad extends BaseAdminController
         }
     }
 
+    /**
+     * 新增广告位
+     */
     public function positionCreate()
     {
         try {
@@ -37,6 +46,9 @@ class Ad extends BaseAdminController
         }
     }
 
+    /**
+     * 更新广告位
+     */
     public function positionUpdate(int $id)
     {
         try {
@@ -49,6 +61,9 @@ class Ad extends BaseAdminController
         }
     }
 
+    /**
+     * 删除广告位
+     */
     public function positionDelete(int $id)
     {
         try {
@@ -61,6 +76,9 @@ class Ad extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询广告列表
+     */
     public function list()
     {
         try {
@@ -72,6 +90,9 @@ class Ad extends BaseAdminController
         }
     }
 
+    /**
+     * 新增广告
+     */
     public function create()
     {
         try {
@@ -82,6 +103,9 @@ class Ad extends BaseAdminController
         }
     }
 
+    /**
+     * 更新广告
+     */
     public function update(int $id)
     {
         try {
@@ -94,6 +118,9 @@ class Ad extends BaseAdminController
         }
     }
 
+    /**
+     * 删除广告
+     */
     public function delete(int $id)
     {
         try {
@@ -106,6 +133,9 @@ class Ad extends BaseAdminController
         }
     }
 
+    /**
+     * 获取广告投放统计
+     */
     public function statistics(int $id)
     {
         try {

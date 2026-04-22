@@ -5,6 +5,9 @@ namespace app\api\model;
 
 use think\Model;
 
+/**
+ * 订单商品明细模型
+ */
 class OrderGoods extends Model
 {
     protected $name = 'order_goods';

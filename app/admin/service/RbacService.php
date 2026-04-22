@@ -6,6 +6,9 @@ namespace app\admin\service;
 use app\admin\model\AdminMenu;
 use think\facade\Db;
 
+/**
+ * 管理端 RBAC 权限服务
+ */
 class RbacService
 {
     public const SUPER_ROLE_CODE = 'super_admin';

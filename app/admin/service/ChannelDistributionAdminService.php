@@ -7,6 +7,9 @@ use app\admin\service\channel\ChannelAdapterFactory;
 use app\common\exception\BizException;
 use think\facade\Db;
 
+/**
+ * 管理端渠道分发任务业务服务
+ */
 class ChannelDistributionAdminService extends BaseAdminService
 {
     private const STATUS_DRAFT = 'draft';
@@ -20,6 +23,9 @@ class ChannelDistributionAdminService extends BaseAdminService
     private const AUDIT_REJECTED = 'rejected';
     private array $tableFieldCache = [];
 
+    /**
+     * 分页查询分发任务
+     */
     public function taskList(array $params, int $page, int $pageSize): array
     {
         $query = Db::name('channel_distribution_task');
@@ -150,6 +156,9 @@ class ChannelDistributionAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 创建分发任务
+     */
     public function createTask(int $adminId, array $payload): array
     {
         $contentId = (int)($payload['content_id'] ?? 0);
@@ -257,6 +266,9 @@ class ChannelDistributionAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 获取任务详情
+     */
     public function taskDetail(string $taskNo): array
     {
         $taskNo = trim($taskNo);
@@ -277,6 +289,9 @@ class ChannelDistributionAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 重试任务
+     */
     public function taskRetry(string $taskNo): array
     {
         $taskNo = trim($taskNo);
@@ -309,6 +324,9 @@ class ChannelDistributionAdminService extends BaseAdminService
         return ['task_no' => $taskNo, 'queued' => true];
     }
 
+    /**
+     * 重新提审任务
+     */
     public function taskResubmit(string $taskNo, int $adminId, array $payload): array
     {
         $taskNo = trim($taskNo);
@@ -446,6 +464,9 @@ class ChannelDistributionAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 审核任务
+     */
     public function taskAudit(string $taskNo, int $adminId, array $payload): array
     {
         $taskNo = trim($taskNo);
@@ -498,6 +519,9 @@ class ChannelDistributionAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 查询任务日志
+     */
     public function taskLogs(string $taskNo): array
     {
         if (!$this->hasTable('channel_distribution_op_log')) {
@@ -511,6 +535,9 @@ class ChannelDistributionAdminService extends BaseAdminService
         return ['task_no' => $taskNo, 'list' => $rows];
     }
 
+    /**
+     * 消费分发发布消息
+     */
     public function consumePublishMessage(array $payload): void
     {
         $taskNo = trim((string)($payload['task_no'] ?? ''));

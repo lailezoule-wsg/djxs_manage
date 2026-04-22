@@ -5,6 +5,9 @@ namespace app\admin\service;
 
 use think\facade\Db;
 
+/**
+ * 管理端系统配置业务服务
+ */
 class ConfigAdminService extends BaseAdminService
 {
     /**
@@ -26,6 +29,9 @@ class ConfigAdminService extends BaseAdminService
         return $this->readConfigFile();
     }
 
+    /**
+     * 批量更新配置项
+     */
     public function update(array $items): void
     {
         if ($this->hasSystemConfigTable()) {

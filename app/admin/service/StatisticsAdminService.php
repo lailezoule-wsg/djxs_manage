@@ -5,8 +5,14 @@ namespace app\admin\service;
 
 use think\facade\Db;
 
+/**
+ * 管理端统计业务服务
+ */
 class StatisticsAdminService extends BaseAdminService
 {
+    /**
+     * 获取经营概览数据
+     */
     public function overview(): array
     {
         return [
@@ -18,6 +24,9 @@ class StatisticsAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 获取用户增长趋势
+     */
     public function userTrend(int $days = 7): array
     {
         $data = [];
@@ -32,6 +41,9 @@ class StatisticsAdminService extends BaseAdminService
         return $data;
     }
 
+    /**
+     * 获取内容规模统计
+     */
     public function content(): array
     {
         return [
@@ -46,6 +58,9 @@ class StatisticsAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 获取支付趋势统计
+     */
     public function paymentTrend(int $days = 7): array
     {
         $data = [];

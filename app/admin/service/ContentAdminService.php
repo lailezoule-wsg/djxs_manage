@@ -6,8 +6,14 @@ namespace app\admin\service;
 use think\exception\ValidateException;
 use think\facade\Db;
 
+/**
+ * 管理端内容业务服务（短剧/小说/分类/标签/审核）
+ */
 class ContentAdminService extends BaseAdminService
 {
+    /**
+     * 重建内容展示统计字段（章节数/字数）
+     */
     public function rebuildDisplayStats(int $limit = 500, bool $dryRun = true): array
     {
         $limit = max(1, min(5000, $limit));
@@ -108,6 +114,9 @@ class ContentAdminService extends BaseAdminService
         return $result;
     }
 
+    /**
+     * 通用分页查询
+     */
     public function listByTable(string $table, array $params, int $page, int $pageSize, array $fixedWhere = [], string $orderField = 'id'): array
     {
         $title = trim((string)($params['title'] ?? ''));
@@ -131,6 +140,9 @@ class ContentAdminService extends BaseAdminService
         return $this->paginateToArray($query, $page, $pageSize);
     }
 
+    /**
+     * 通用创建
+     */
     public function createByTable(string $table, array $payload): int
     {
         $data = $this->filterPayload($table, $payload, false);
@@ -153,6 +165,9 @@ class ContentAdminService extends BaseAdminService
         return $id;
     }
 
+    /**
+     * 通用创建（带固定条件作用域）
+     */
     public function createByTableScoped(string $table, array $payload, array $fixedWhere): int
     {
         $data = $this->filterPayload($table, $payload, false);
@@ -178,6 +193,9 @@ class ContentAdminService extends BaseAdminService
         return $id;
     }
 
+    /**
+     * 通用更新
+     */
     public function updateByTable(string $table, int $id, array $payload): void
     {
         $this->assertExists($table, $id);
@@ -200,6 +218,9 @@ class ContentAdminService extends BaseAdminService
         $this->afterContentRowUpdate($table, $id, $merged);
     }
 
+    /**
+     * 通用更新（带固定条件作用域）
+     */
     public function updateByTableScoped(string $table, int $id, array $payload, array $fixedWhere): void
     {
         $query = Db::name($table)->where('id', $id);
@@ -560,6 +581,9 @@ class ContentAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 通用删除
+     */
     public function deleteByTable(string $table, int $id): void
     {
         $this->assertExists($table, $id);
@@ -582,6 +606,9 @@ class ContentAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 通用删除（带固定条件作用域）
+     */
     public function deleteByTableScoped(string $table, int $id, array $fixedWhere): void
     {
         $query = Db::name($table)->where('id', $id);
@@ -614,6 +641,9 @@ class ContentAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 通用内容审核
+     */
     public function audit(array $payload): void
     {
         $tableMap = ['drama' => 'drama', 'novel' => 'novel'];
@@ -644,6 +674,9 @@ class ContentAdminService extends BaseAdminService
         Db::name($table)->where('id', $contentId)->update($data);
     }
 
+    /**
+     * 按内容类型执行审核
+     */
     public function auditByType(string $contentType, array $payload): void
     {
         $payload['content_type'] = $contentType;

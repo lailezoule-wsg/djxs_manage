@@ -14,6 +14,9 @@ class Ad extends Model
     protected $pk = 'id';
     protected $autoWriteTimestamp = false;
 
+    /**
+     * 关联广告位
+     */
     public function position()
     {
         return $this->belongsTo(AdPosition::class, 'position_id');

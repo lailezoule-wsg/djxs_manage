@@ -6,6 +6,9 @@ namespace app\admin\controller;
 use app\admin\service\FlashSaleAdminService;
 use think\App;
 
+/**
+ * 管理端秒杀活动管理接口
+ */
 class FlashSale extends BaseAdminController
 {
     protected FlashSaleAdminService $service;
@@ -16,6 +19,9 @@ class FlashSale extends BaseAdminController
         $this->service = new FlashSaleAdminService();
     }
 
+    /**
+     * 分页查询活动列表
+     */
     public function activityList()
     {
         try {
@@ -27,6 +33,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 新增秒杀活动
+     */
     public function activityCreate()
     {
         try {
@@ -37,6 +46,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 更新秒杀活动
+     */
     public function activityUpdate(int $id)
     {
         try {
@@ -47,6 +59,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 发布秒杀活动
+     */
     public function activityPublish(int $id)
     {
         try {
@@ -57,6 +72,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 关闭秒杀活动
+     */
     public function activityClose(int $id)
     {
         try {
@@ -67,6 +85,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 复制秒杀活动
+     */
     public function activityCopy(int $id)
     {
         try {
@@ -78,6 +99,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 批量复制秒杀活动
+     */
     public function activityBatchCopy()
     {
         try {
@@ -89,6 +113,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 批量更新活动状态
+     */
     public function activityBatchStatus()
     {
         try {
@@ -99,6 +126,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询活动商品列表
+     */
     public function itemList(int $activityId)
     {
         try {
@@ -110,6 +140,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 新增活动商品
+     */
     public function itemCreate()
     {
         try {
@@ -120,6 +153,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 更新活动商品
+     */
     public function itemUpdate(int $id)
     {
         try {
@@ -130,6 +166,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 删除活动商品
+     */
     public function itemDelete(int $id)
     {
         try {
@@ -140,6 +179,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询秒杀订单
+     */
     public function orderList()
     {
         try {
@@ -151,6 +193,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 获取活动统计数据
+     */
     public function statistics(int $activityId)
     {
         try {
@@ -161,6 +206,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 创建订单导出任务
+     */
     public function orderExportTaskCreate()
     {
         try {
@@ -172,6 +220,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 查询订单导出任务状态
+     */
     public function orderExportTaskStatus(string $taskId)
     {
         try {
@@ -183,6 +234,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 重试订单导出任务
+     */
     public function orderExportTaskRetry(string $taskId)
     {
         try {
@@ -194,6 +248,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询订单导出任务
+     */
     public function orderExportTaskList()
     {
         try {
@@ -206,6 +263,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 删除订单导出任务
+     */
     public function orderExportTaskDelete(string $taskId)
     {
         try {
@@ -217,6 +277,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询风控日志
+     */
     public function riskLogList()
     {
         try {
@@ -228,6 +291,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 获取风控汇总信息
+     */
     public function riskSummary()
     {
         try {
@@ -238,6 +304,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 获取风控健康历史
+     */
     public function riskHealthHistory()
     {
         try {
@@ -248,6 +317,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 获取风控健康阈值
+     */
     public function riskHealthThresholdGet()
     {
         try {
@@ -258,6 +330,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 更新风控健康阈值
+     */
     public function riskHealthThresholdUpdate()
     {
         try {
@@ -268,6 +343,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 分页查询黑名单
+     */
     public function blacklistList()
     {
         try {
@@ -279,6 +357,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 新增黑名单
+     */
     public function blacklistCreate()
     {
         try {
@@ -290,6 +371,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 更新黑名单
+     */
     public function blacklistUpdate(int $id)
     {
         try {
@@ -301,6 +385,9 @@ class FlashSale extends BaseAdminController
         }
     }
 
+    /**
+     * 删除黑名单
+     */
     public function blacklistDelete(int $id)
     {
         try {

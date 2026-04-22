@@ -21,19 +21,25 @@ class Watch extends Model
     protected $createTime = 'create_time';
     protected $updateTime = 'update_time';
 
-    // 关联用户
+    /**
+     * 关联用户
+     */
     public function user()
     {
         return $this->belongsTo(User::class, 'user_id', 'id');
     }
 
-    // 关联短剧
+    /**
+     * 关联短剧
+     */
     public function drama()
     {
         return $this->belongsTo(Drama::class, 'drama_id', 'id');
     }
 
-    // 关联剧集
+    /**
+     * 关联剧集
+     */
     public function episode()
     {
         return $this->belongsTo(DramaEpisode::class, 'episode_id', 'id');

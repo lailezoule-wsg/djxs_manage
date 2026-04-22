@@ -22,12 +22,18 @@ use think\facade\Log;
  */
 class ContentStatConsume extends Command
 {
+    /**
+     * 注册命令名与描述
+     */
     protected function configure(): void
     {
         $this->setName('content-stat:consume')
             ->setDescription('Consume RabbitMQ: read/watch progress, novel/drama counters');
     }
 
+    /**
+     * 启动内容统计队列消费
+     */
     protected function execute(Input $input, Output $output): int
     {
         $cfg = config('rabbitmq');

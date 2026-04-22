@@ -5,6 +5,9 @@ namespace app\admin\controller;
 
 use app\admin\service\StatisticsAdminService;
 
+/**
+ * 管理端统计分析接口
+ */
 class Statistics extends BaseAdminController
 {
     protected StatisticsAdminService $service;
@@ -15,6 +18,9 @@ class Statistics extends BaseAdminController
         $this->service = new StatisticsAdminService();
     }
 
+    /**
+     * 获取整体经营概览
+     */
     public function overview()
     {
         try {
@@ -25,6 +31,9 @@ class Statistics extends BaseAdminController
         }
     }
 
+    /**
+     * 获取用户增长趋势
+     */
     public function user()
     {
         try {
@@ -35,6 +44,9 @@ class Statistics extends BaseAdminController
         }
     }
 
+    /**
+     * 获取内容规模统计
+     */
     public function content()
     {
         try {
@@ -45,6 +57,9 @@ class Statistics extends BaseAdminController
         }
     }
 
+    /**
+     * 获取支付趋势统计
+     */
     public function payment()
     {
         try {

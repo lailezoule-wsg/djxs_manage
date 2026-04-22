@@ -6,8 +6,14 @@ namespace app\admin\service;
 use think\exception\ValidateException;
 use think\facade\Db;
 
+/**
+ * 管理端服务层基础能力
+ */
 class BaseAdminService
 {
+    /**
+     * 将分页对象统一转换为前端分页结构
+     */
     protected function paginateToArray($query, int $page, int $pageSize): array
     {
         $result = $query->paginate([
@@ -23,12 +29,18 @@ class BaseAdminService
         ];
     }
 
+    /**
+     * 获取数据表字段信息
+     */
     protected function getTableFields(string $table): array
     {
         $fields = Db::name($table)->getFields();
         return is_array($fields) ? $fields : [];
     }
 
+    /**
+     * 仅保留表中允许写入的字段
+     */
     protected function filterPayload(string $table, array $payload, bool $isUpdate): array
     {
         $fields = array_keys($this->getTableFields($table));
@@ -59,6 +71,9 @@ class BaseAdminService
         return $data;
     }
 
+    /**
+     * 校验指定 ID 记录存在
+     */
     protected function assertExists(string $table, int $id, string $msg = '数据不存在'): void
     {
         $exists = Db::name($table)->where('id', $id)->find();

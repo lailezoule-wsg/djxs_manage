@@ -10,8 +10,10 @@ use think\Model;
  */
 class DramaEpisode extends Model
 {
+    // 表名
     protected $table = 'djxs_drama_episode';
     
+    // 自动时间戳
     protected $autoWriteTimestamp = 'datetime';
     
     protected $createTime = 'create_time';

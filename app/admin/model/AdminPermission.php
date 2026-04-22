@@ -5,6 +5,9 @@ namespace app\admin\model;
 
 use think\Model;
 
+/**
+ * 管理端权限点模型
+ */
 class AdminPermission extends Model
 {
     protected $name = 'admin_permission';

@@ -19,7 +19,9 @@ class Order extends Model
     // 自动时间戳
     protected $autoWriteTimestamp = true;
 
-    // 关联用户
+    /**
+     * 关联下单用户
+     */
     public function user()
     {
         return $this->belongsTo(User::class, 'user_id', 'id');

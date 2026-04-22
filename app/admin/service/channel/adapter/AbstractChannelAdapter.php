@@ -3,8 +3,14 @@ declare(strict_types=1);
 
 namespace app\admin\service\channel\adapter;
 
+/**
+ * 渠道适配器抽象基类
+ */
 abstract class AbstractChannelAdapter implements ChannelAdapterInterface
 {
+    /**
+     * 使用统一头部签名规则校验回调
+     */
     public function verifyCallbackSign(array $headers, string $rawBody, array $context = []): bool
     {
         $secret = trim((string)($context['callback_secret'] ?? ''));
@@ -22,6 +28,9 @@ abstract class AbstractChannelAdapter implements ChannelAdapterInterface
         return hash_equals($expected, $sign);
     }
 
+    /**
+     * 解析标准化回调负载
+     */
     public function parseCallback(array $headers, string $rawBody): array
     {
         $payload = json_decode($rawBody, true);

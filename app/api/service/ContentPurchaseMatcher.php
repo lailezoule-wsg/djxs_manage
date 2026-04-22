@@ -16,7 +16,12 @@ final class ContentPurchaseMatcher
      *
      * @return array<int, array{goods_type:int, goods_id:int}>
      */
-    public static function orderGoodsMatchers(int $goodsType, int $goodsId): array
+    public static function orderGoodsMatchers(
+        int $goodsType,
+        int $goodsId,
+        ?callable $episodeToDramaResolver = null,
+        ?callable $chapterToNovelResolver = null
+    ): array
     {
         $goodsType = (int)$goodsType;
         $goodsId = (int)$goodsId;
@@ -33,8 +38,32 @@ final class ContentPurchaseMatcher
             if ($chapterId > 0) {
                 $matchers[] = ['goods_type' => 2, 'goods_id' => $chapterId];
             }
+        } elseif ($goodsType === 1) {
+            // 任意剧集都应识别整剧(10)购买记录，防止已购整剧后重复购买单集
+            $dramaId = 0;
+            if ($episodeToDramaResolver !== null) {
+                $dramaId = (int)$episodeToDramaResolver($goodsId);
+            } else {
+                $episode = DramaEpisode::field('id,drama_id')->find($goodsId);
+                $dramaId = $episode ? (int)$episode->drama_id : 0;
+            }
+            if ($dramaId > 0) {
+                $matchers[] = ['goods_type' => 10, 'goods_id' => $dramaId];
+            }
+        } elseif ($goodsType === 2) {
+            // 任意章节都应识别整本(20)购买记录，防止已购整本后重复购买单章
+            $novelId = 0;
+            if ($chapterToNovelResolver !== null) {
+                $novelId = (int)$chapterToNovelResolver($goodsId);
+            } else {
+                $chapter = NovelChapter::field('id,novel_id')->find($goodsId);
+                $novelId = $chapter ? (int)$chapter->novel_id : 0;
+            }
+            if ($novelId > 0) {
+                $matchers[] = ['goods_type' => 20, 'goods_id' => $novelId];
+            }
         }
-        return $matchers;
+        return array_values(array_unique($matchers, SORT_REGULAR));
     }
 
     /**

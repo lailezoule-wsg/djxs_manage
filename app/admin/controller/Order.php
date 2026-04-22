@@ -6,6 +6,9 @@ namespace app\admin\controller;
 use app\admin\service\OrderAdminService;
 use think\exception\ValidateException;
 
+/**
+ * 管理端订单管理接口
+ */
 class Order extends BaseAdminController
 {
     protected OrderAdminService $service;
@@ -16,6 +19,9 @@ class Order extends BaseAdminController
         $this->service = new OrderAdminService();
     }
 
+    /**
+     * 分页查询订单列表
+     */
     public function list()
     {
         try {
@@ -29,6 +35,9 @@ class Order extends BaseAdminController
         }
     }
 
+    /**
+     * 获取订单详情
+     */
     public function detail(int $id)
     {
         try {
@@ -41,6 +50,9 @@ class Order extends BaseAdminController
         }
     }
 
+    /**
+     * 标记订单退款
+     */
     public function refund(int $id)
     {
         try {
@@ -53,6 +65,9 @@ class Order extends BaseAdminController
         }
     }
 
+    /**
+     * 获取订单统计概览
+     */
     public function statistics()
     {
         try {
@@ -63,6 +78,9 @@ class Order extends BaseAdminController
         }
     }
 
+    /**
+     * 查询超时关单任务状态
+     */
     public function timeoutJobStatus()
     {
         try {

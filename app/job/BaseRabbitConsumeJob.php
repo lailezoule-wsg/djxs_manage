@@ -7,8 +7,14 @@ use PhpAmqpLib\Channel\AMQPChannel;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
 use think\console\Output;
 
+/**
+ * RabbitMQ 消费任务基类
+ */
 abstract class BaseRabbitConsumeJob
 {
+    /**
+     * 建立连接并启动消费循环
+     */
     public function run(Output $output): int
     {
         $cfg = config('rabbitmq');
@@ -49,5 +55,8 @@ abstract class BaseRabbitConsumeJob
         return 0;
     }
 
+    /**
+     * 子类注册具体消费者逻辑
+     */
     abstract protected function setupConsumers(AMQPChannel $channel, array $cfg, Output $output): void;
 }

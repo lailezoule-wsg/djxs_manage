@@ -6,6 +6,9 @@ namespace app\admin\controller;
 use app\admin\service\NewsAdminService;
 use think\exception\ValidateException;
 
+/**
+ * 管理端资讯管理接口
+ */
 class News extends BaseAdminController
 {
     protected NewsAdminService $service;
@@ -16,6 +19,9 @@ class News extends BaseAdminController
         $this->service = new NewsAdminService();
     }
 
+    /**
+     * 分页查询资讯列表
+     */
     public function list()
     {
         try {
@@ -28,6 +34,9 @@ class News extends BaseAdminController
         }
     }
 
+    /**
+     * 新增资讯
+     */
     public function create()
     {
         try {
@@ -39,6 +48,9 @@ class News extends BaseAdminController
         }
     }
 
+    /**
+     * 更新资讯
+     */
     public function update(int $id)
     {
         try {
@@ -52,6 +64,9 @@ class News extends BaseAdminController
         }
     }
 
+    /**
+     * 删除资讯
+     */
     public function delete(int $id)
     {
         try {

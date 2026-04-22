@@ -14,6 +14,9 @@ use think\console\Output;
  */
 class FlashSaleReleaseReserve extends Command
 {
+    /**
+     * 注册命令名、描述与参数
+     */
     protected function configure()
     {
         $this->setName('flash-sale:release-reserve')
@@ -21,6 +24,9 @@ class FlashSaleReleaseReserve extends Command
             ->addOption('limit', 'l', Option::VALUE_OPTIONAL, '单次处理条数', (string)env('FLASH_SALE_RELEASE_BATCH', '200'));
     }
 
+    /**
+     * 执行超时占用库存释放
+     */
     protected function execute(Input $input, Output $output)
     {
         $limit = max(1, min(500, (int)$input->getOption('limit')));
