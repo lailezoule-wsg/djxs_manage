@@ -35,6 +35,8 @@ class FlashSaleService
     private const TOKEN_TTL_SECONDS = 90;
     private const TOKEN_CONSUME_RETRY_TIMES = 1;
     private const TOKEN_CONSUME_RETRY_SLEEP_MS = 25;
+    private const QUEUE_PUBLISH_RETRY_TIMES = 2;
+    private const QUEUE_PUBLISH_RETRY_SLEEP_MS = 50;
     private const REQUEST_STATE_TTL = 900;
     private const RELEASE_FALLBACK_THROTTLE_SECONDS = 3;
     private const ORDER_STATUS_QUEUEING = 8;
@@ -524,9 +526,22 @@ class FlashSaleService
                 }
             );
             $heartbeatLocks();
-            $published = FlashSaleOrderQueueService::publish($queuePayload);
+            $published = $this->publishQueueWithRetry($queuePayload);
             if (!$published) {
-                throw new ValidateException('系统繁忙，请稍后重试');
+                if ($this->isQueueSyncFallbackEnabled()) {
+                    Log::warning('flash-sale queue publish failed, fallback to sync consume', [
+                        'request_id' => $requestId,
+                        'user_id' => $userId,
+                        'activity_id' => $activityId,
+                        'item_id' => $itemId,
+                    ]);
+                    $this->consumeCreateOrderMessage($queuePayload);
+                    $state = $this->getRequestState($requestId);
+                    if (!empty($state)) {
+                        return $this->buildResponseByRequestState($state, $requestId);
+                    }
+                }
+                throw new ValidateException('秒杀排队服务繁忙，请稍后重试');
             }
             $this->setRequestState($requestId, [
                 'status' => self::ORDER_STATUS_QUEUEING,
@@ -1409,6 +1424,34 @@ class FlashSaleService
                 return true;
             }
         }
+        // 兜底：在已持有请求锁/用户商品锁的前提下，尝试一次强制消费，减少误判“处理中”。
+        if ($this->forceConsumeTokenFallback($cacheKey, $token, $ttlSeconds)) {
+            return true;
+        }
+        return false;
+    }
+
+    private function forceConsumeTokenFallback(string $cacheKey, string $token, int $ttlSeconds): bool
+    {
+        if ($cacheKey === '') {
+            return false;
+        }
+        try {
+            if (!Cache::has($cacheKey)) {
+                return false;
+            }
+            Cache::delete($cacheKey);
+            if (!Cache::has($cacheKey)) {
+                $this->markTokenConsumed($token, $ttlSeconds);
+                return true;
+            }
+        } catch (\Throwable $e) {
+            Log::warning('flash-sale token fallback consume failed', [
+                'cache_key' => $cacheKey,
+                'token_prefix' => substr($token, 0, 8),
+                'error' => $e->getMessage(),
+            ]);
+        }
         return false;
     }
 
@@ -1568,6 +1611,39 @@ class FlashSaleService
     {
         $sleepMs = (int)env('FLASH_SALE_TOKEN_CONSUME_RETRY_SLEEP_MS', self::TOKEN_CONSUME_RETRY_SLEEP_MS);
         return max(5, min(100, $sleepMs));
+    }
+
+    private function getQueuePublishRetryTimes(): int
+    {
+        $times = (int)env('FLASH_SALE_QUEUE_PUBLISH_RETRY_TIMES', self::QUEUE_PUBLISH_RETRY_TIMES);
+        return max(0, min(5, $times));
+    }
+
+    private function getQueuePublishRetrySleepMs(): int
+    {
+        $sleepMs = (int)env('FLASH_SALE_QUEUE_PUBLISH_RETRY_SLEEP_MS', self::QUEUE_PUBLISH_RETRY_SLEEP_MS);
+        return max(10, min(300, $sleepMs));
+    }
+
+    private function isQueueSyncFallbackEnabled(): bool
+    {
+        return (int)env('FLASH_SALE_QUEUE_SYNC_FALLBACK', 1) === 1;
+    }
+
+    private function publishQueueWithRetry(array $payload): bool
+    {
+        if (FlashSaleOrderQueueService::publish($payload)) {
+            return true;
+        }
+        $retryTimes = $this->getQueuePublishRetryTimes();
+        $retrySleepMs = $this->getQueuePublishRetrySleepMs();
+        for ($i = 0; $i < $retryTimes; $i++) {
+            usleep($retrySleepMs * 1000);
+            if (FlashSaleOrderQueueService::publish($payload)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function calcExpireSeconds(string $reserveExpireTime, string $fallbackCreateTime = ''): int
@@ -2402,7 +2478,7 @@ LUA;
                 usleep($baseSleepMs * $attempt * 1000);
             }
         }
-        throw new ValidateException('系统繁忙，请稍后重试');
+        throw new ValidateException('数据库锁冲突，请稍后重试');
     }
 
     private function isDeadlockException(\Throwable $e): bool
