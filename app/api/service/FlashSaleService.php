@@ -13,6 +13,7 @@ use app\api\model\OrderGoods;
 use think\exception\ValidateException;
 use think\facade\Cache;
 use think\facade\Db;
+use think\facade\Log;
 
 /**
  * 用户端秒杀业务服务
@@ -20,6 +21,8 @@ use think\facade\Db;
 class FlashSaleService
 {
     private const TOKEN_CACHE_PREFIX = 'flash:sale:token:';
+    private const TOKEN_BINDING_PREFIX = 'flash:sale:token:binding:';
+    private const TOKEN_CONSUMED_PREFIX = 'flash:sale:token:consumed:';
     private const RELEASE_ZSET_KEY = 'flash:sale:reserve:release';
     private const STOCK_KEY_PREFIX = 'flash:sale:stock:';
     private const PENDING_KEY_PREFIX = 'flash:sale:pending:';
@@ -30,6 +33,8 @@ class FlashSaleService
     private const USER_ITEM_PENDING_PREFIX = 'flash:sale:user:item:pending:';
     private const RELEASE_FALLBACK_LOCK_KEY = 'flash:sale:reserve:release:fallback:lock';
     private const TOKEN_TTL_SECONDS = 90;
+    private const TOKEN_CONSUME_RETRY_TIMES = 1;
+    private const TOKEN_CONSUME_RETRY_SLEEP_MS = 25;
     private const REQUEST_STATE_TTL = 900;
     private const RELEASE_FALLBACK_THROTTLE_SECONDS = 3;
     private const ORDER_STATUS_QUEUEING = 8;
@@ -179,6 +184,7 @@ class FlashSaleService
         $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
         $tokenTtlSeconds = $this->getTokenTtlSeconds();
         Cache::set($cacheKey, 1, $tokenTtlSeconds);
+        $this->writeTokenBinding($token, $userId, $activityId, $itemId, $tokenTtlSeconds);
 
         return [
             'token' => $token,
@@ -343,18 +349,66 @@ class FlashSaleService
             $this->releaseRequestLock($requestId, $requestLockToken);
             throw new ValidateException('请求处理中，请勿重复提交');
         }
-        $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
-        if (!$this->consumeToken($cacheKey)) {
+        $bindingMismatchMessage = $this->resolveTokenBindingMismatchMessage($token, $userId, $activityId, $itemId);
+        if ($bindingMismatchMessage !== '') {
             $this->releaseUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
             $this->releaseRequestLock($requestId, $requestLockToken);
             $this->setRequestState($requestId, [
                 'status' => 3,
                 'user_id' => $userId,
-                'message' => '抢购令牌无效或已过期',
+                'message' => $bindingMismatchMessage,
                 'reserve_expire_time' => '',
                 'order_id' => 0,
             ]);
-            throw new ValidateException('抢购令牌无效或已过期');
+            $this->recordRiskEvent('token_mismatch', [
+                'user_id' => $userId,
+                'activity_id' => $activityId,
+                'item_id' => $itemId,
+                'extra' => [
+                    'request_id' => $requestId,
+                    'token_prefix' => substr($token, 0, 8),
+                ],
+            ]);
+            throw new ValidateException($bindingMismatchMessage);
+        }
+        $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
+        $tokenTtlSeconds = $this->getTokenTtlSeconds();
+        if (!$this->consumeTokenWithRetry(
+            $cacheKey,
+            $token,
+            $tokenTtlSeconds,
+            $this->getTokenConsumeRetryTimes(),
+            $this->getTokenConsumeRetrySleepMs()
+        )) {
+            $this->releaseUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
+            $this->releaseRequestLock($requestId, $requestLockToken);
+            $tokenFailure = $this->resolveTokenConsumeFailure($token, $cacheKey);
+            $this->setRequestState($requestId, [
+                'status' => 3,
+                'user_id' => $userId,
+                'message' => (string)$tokenFailure['message'],
+                'reserve_expire_time' => '',
+                'order_id' => 0,
+            ]);
+            $this->recordRiskEvent((string)$tokenFailure['reason'], [
+                'user_id' => $userId,
+                'activity_id' => $activityId,
+                'item_id' => $itemId,
+                'extra' => [
+                    'request_id' => $requestId,
+                    'token_prefix' => substr($token, 0, 8),
+                    'cache_key' => $cacheKey,
+                ],
+            ]);
+            Log::warning('flash-sale token consume failed', [
+                'reason' => (string)$tokenFailure['reason'],
+                'request_id' => $requestId,
+                'user_id' => $userId,
+                'activity_id' => $activityId,
+                'item_id' => $itemId,
+                'token_prefix' => substr($token, 0, 8),
+            ]);
+            throw new ValidateException((string)$tokenFailure['message']);
         }
         if ($this->hasUserItemPendingMarker($itemId, $userId)) {
             $this->releaseUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
@@ -1245,7 +1299,70 @@ class FlashSaleService
         return self::TOKEN_CACHE_PREFIX . $userId . ':' . $activityId . ':' . $itemId . ':' . $token;
     }
 
-    private function consumeToken(string $cacheKey): bool
+    private function buildTokenBindingCacheKey(string $token): string
+    {
+        return self::TOKEN_BINDING_PREFIX . $token;
+    }
+
+    private function buildTokenConsumedCacheKey(string $token): string
+    {
+        return self::TOKEN_CONSUMED_PREFIX . $token;
+    }
+
+    private function writeTokenBinding(string $token, int $userId, int $activityId, int $itemId, int $ttlSeconds): void
+    {
+        if ($token === '') {
+            return;
+        }
+        try {
+            Cache::set(
+                $this->buildTokenBindingCacheKey($token),
+                [
+                    'user_id' => $userId,
+                    'activity_id' => $activityId,
+                    'item_id' => $itemId,
+                ],
+                max(30, $ttlSeconds)
+            );
+        } catch (\Throwable $e) {
+        }
+    }
+
+    private function resolveTokenBindingMismatchMessage(string $token, int $userId, int $activityId, int $itemId): string
+    {
+        if ($token === '') {
+            return '';
+        }
+        try {
+            $value = Cache::get($this->buildTokenBindingCacheKey($token));
+            if (!is_array($value) || empty($value)) {
+                return '';
+            }
+            $boundUserId = (int)($value['user_id'] ?? 0);
+            $boundActivityId = (int)($value['activity_id'] ?? 0);
+            $boundItemId = (int)($value['item_id'] ?? 0);
+            if ($boundUserId === $userId && $boundActivityId === $activityId && $boundItemId === $itemId) {
+                return '';
+            }
+            return '抢购令牌与当前请求不匹配，请重新获取令牌';
+        } catch (\Throwable $e) {
+        }
+        return '';
+    }
+
+    private function markTokenConsumed(string $token, int $ttlSeconds): void
+    {
+        if ($token === '') {
+            return;
+        }
+        try {
+            Cache::set($this->buildTokenConsumedCacheKey($token), 1, max(30, $ttlSeconds));
+            Cache::delete($this->buildTokenBindingCacheKey($token));
+        } catch (\Throwable $e) {
+        }
+    }
+
+    private function consumeToken(string $cacheKey, string $token, int $ttlSeconds): bool
     {
         if ($cacheKey === '') {
             return false;
@@ -1254,7 +1371,11 @@ class FlashSaleService
         if ($redis && method_exists($redis, 'eval')) {
             try {
                 $ret = (int)$redis->eval("return redis.call('DEL', KEYS[1])", [$cacheKey], 1);
-                return $ret === 1;
+                if ($ret === 1) {
+                    $this->markTokenConsumed($token, $ttlSeconds);
+                    return true;
+                }
+                return false;
             } catch (\Throwable $e) {
             }
         }
@@ -1263,10 +1384,65 @@ class FlashSaleService
                 return false;
             }
             Cache::delete($cacheKey);
+            $this->markTokenConsumed($token, $ttlSeconds);
             return true;
         } catch (\Throwable $e) {
         }
         return false;
+    }
+
+    private function consumeTokenWithRetry(
+        string $cacheKey,
+        string $token,
+        int $ttlSeconds,
+        int $retryTimes = 1,
+        int $retrySleepMs = 25
+    ): bool {
+        if ($this->consumeToken($cacheKey, $token, $ttlSeconds)) {
+            return true;
+        }
+        $retryTimes = max(0, min(3, $retryTimes));
+        $retrySleepMs = max(5, min(100, $retrySleepMs));
+        for ($i = 0; $i < $retryTimes; $i++) {
+            usleep($retrySleepMs * 1000);
+            if ($this->consumeToken($cacheKey, $token, $ttlSeconds)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @return array{reason:string,message:string}
+     */
+    private function resolveTokenConsumeFailure(string $token, string $cacheKey): array
+    {
+        $consumed = false;
+        $exists = false;
+        try {
+            $consumed = (bool)Cache::has($this->buildTokenConsumedCacheKey($token));
+        } catch (\Throwable $e) {
+        }
+        try {
+            $exists = (bool)Cache::has($cacheKey);
+        } catch (\Throwable $e) {
+        }
+        if ($consumed) {
+            return [
+                'reason' => 'token_reused',
+                'message' => '抢购令牌已被使用，请重新获取令牌',
+            ];
+        }
+        if ($exists) {
+            return [
+                'reason' => 'token_consume_conflict',
+                'message' => '抢购令牌处理中，请稍后重试',
+            ];
+        }
+        return [
+            'reason' => 'token_expired_or_missing',
+            'message' => '抢购令牌已过期或不存在，请重新获取令牌',
+        ];
     }
 
     private function resolveButtonStatus(array $row, int $availableStock, string $now): string
@@ -1380,6 +1556,18 @@ class FlashSaleService
     {
         $ttl = (int)env('FLASH_SALE_TOKEN_TTL_SECONDS', self::TOKEN_TTL_SECONDS);
         return max(30, min(300, $ttl));
+    }
+
+    private function getTokenConsumeRetryTimes(): int
+    {
+        $times = (int)env('FLASH_SALE_TOKEN_CONSUME_RETRY_TIMES', self::TOKEN_CONSUME_RETRY_TIMES);
+        return max(0, min(3, $times));
+    }
+
+    private function getTokenConsumeRetrySleepMs(): int
+    {
+        $sleepMs = (int)env('FLASH_SALE_TOKEN_CONSUME_RETRY_SLEEP_MS', self::TOKEN_CONSUME_RETRY_SLEEP_MS);
+        return max(5, min(100, $sleepMs));
     }
 
     private function calcExpireSeconds(string $reserveExpireTime, string $fallbackCreateTime = ''): int
