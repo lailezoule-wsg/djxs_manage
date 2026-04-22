@@ -204,6 +204,7 @@ class FlashSaleService
         $activityId = (int)($payload['activity_id'] ?? 0);
         $itemId = (int)($payload['item_id'] ?? 0);
         $buyCount = max(1, (int)($payload['buy_count'] ?? 1));
+        // 归一化客户端标识，避免后续风控键异常膨胀。
         $clientIp = $this->normalizeClientIp((string)($payload['client_ip'] ?? ''));
         $deviceId = $this->normalizeDeviceId((string)($payload['device_id'] ?? ''));
         if ($activityId <= 0 || $itemId <= 0) {
@@ -292,12 +293,14 @@ class FlashSaleService
             throw new ValidateException('request_id 不合法');
         }
 
+        // 先读 request_id 状态缓存，实现幂等快速返回。
         $cachedState = $this->getRequestState($requestId);
         if (!empty($cachedState)) {
             $cachedUserId = (int)($cachedState['user_id'] ?? 0);
             if ($cachedUserId > 0 && $cachedUserId !== $userId) {
                 throw new ValidateException('request_id 不合法');
             }
+            // 根据缓存状态统一返回（排队/待支付/失败等）。
             return $this->buildResponseByRequestState($cachedState, $requestId);
         }
         $exists = FlashSaleOrder::where('request_id', $requestId)->find();
@@ -307,6 +310,7 @@ class FlashSaleService
             }
             $order = Order::where('id', (int)$exists->order_id)->find();
             $reserveExpireTime = (string)($exists->reserve_expire_time ?? '');
+            // 计算剩余支付时长（字段缺失时回退 create_time 推算）。
             $expireSeconds = $this->calcExpireSeconds($reserveExpireTime, $order ? (string)$order->create_time : '');
             return [
                 'order_id' => (int)($order->id ?? 0),
@@ -319,6 +323,7 @@ class FlashSaleService
             ];
         }
         if ($token === '') {
+            // 参数错误也写入状态缓存，便于结果查询接口返回一致错误。
             $this->setRequestState($requestId, [
                 'status' => 3,
                 'user_id' => $userId,
@@ -329,6 +334,7 @@ class FlashSaleService
             throw new ValidateException('token 不能为空');
         }
         if (!$this->isValidToken($token)) {
+            // 参数错误也写入状态缓存，便于结果查询接口返回一致错误。
             $this->setRequestState($requestId, [
                 'status' => 3,
                 'user_id' => $userId,
@@ -338,19 +344,25 @@ class FlashSaleService
             ]);
             throw new ValidateException('token 不合法');
         }
+        // 创建前先做黑名单与限频拦截。
         $this->assertCreateBlacklist($userId, $activityId, $itemId, $clientIp, $deviceId);
         $this->assertCreateRateLimit($userId, $activityId, $itemId, $clientIp, $deviceId);
+        // 校验 request_id 生存窗口，防止旧请求重放。
         $this->assertRequestIdWindow($requestId);
 
+        // request_id 维度互斥，确保同一请求只会被一个进程处理。
         $requestLockToken = $this->acquireRequestLock($requestId);
         if ($requestLockToken === '') {
+            // 其他进程已在处理，返回排队中由前端轮询结果接口。
             return $this->buildQueueingResponse($requestId);
         }
+        // 用户-商品维度互斥，避免同人同商品并发下单。
         $userItemLockToken = $this->acquireUserItemLock($activityId, $itemId, $userId);
         if ($userItemLockToken === '') {
             $this->releaseRequestLock($requestId, $requestLockToken);
             throw new ValidateException('请求处理中，请勿重复提交');
         }
+        // 校验 token 绑定关系，阻止串参/重放。
         $bindingMismatchMessage = $this->resolveTokenBindingMismatchMessage($token, $userId, $activityId, $itemId);
         if ($bindingMismatchMessage !== '') {
             $this->releaseUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
@@ -362,6 +374,7 @@ class FlashSaleService
                 'reserve_expire_time' => '',
                 'order_id' => 0,
             ]);
+            // 记录异常行为，供风控与追踪分析。
             $this->recordRiskEvent('token_mismatch', [
                 'user_id' => $userId,
                 'activity_id' => $activityId,
@@ -373,6 +386,7 @@ class FlashSaleService
             ]);
             throw new ValidateException($bindingMismatchMessage);
         }
+        // 计算 token 缓存键并按配置执行消费（带短重试）。
         $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
         $tokenTtlSeconds = $this->getTokenTtlSeconds();
         if (!$this->consumeTokenWithRetry(
@@ -384,6 +398,7 @@ class FlashSaleService
         )) {
             $this->releaseUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
             $this->releaseRequestLock($requestId, $requestLockToken);
+            // 归因 token 失败类型，统一返回用户可理解提示。
             $tokenFailure = $this->resolveTokenConsumeFailure($token, $cacheKey);
             $this->setRequestState($requestId, [
                 'status' => 3,
@@ -392,6 +407,7 @@ class FlashSaleService
                 'reserve_expire_time' => '',
                 'order_id' => 0,
             ]);
+            // 将失败原因写入风控日志，便于线上排障。
             $this->recordRiskEvent((string)$tokenFailure['reason'], [
                 'user_id' => $userId,
                 'activity_id' => $activityId,
@@ -422,6 +438,7 @@ class FlashSaleService
             ]);
             throw new ValidateException((string)$tokenFailure['message']);
         }
+        // 二次检查用户商品待处理标记，拦截重复待支付单。
         if ($this->hasUserItemPendingMarker($itemId, $userId)) {
             $this->releaseUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
             $this->releaseRequestLock($requestId, $requestLockToken);
@@ -430,6 +447,7 @@ class FlashSaleService
         $redisReserved = false;
         $lockedReserved = false;
         $queuePayload = [];
+        // 长流程心跳续锁，防止锁 TTL 过期导致并发穿透。
         $heartbeatLocks = function () use ($requestId, $requestLockToken, $activityId, $itemId, $userId, $userItemLockToken): void {
             $requestOk = $this->refreshRequestLock($requestId, $requestLockToken);
             $userItemOk = $this->refreshUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
@@ -438,6 +456,7 @@ class FlashSaleService
             }
         };
         try {
+            // 事务内完成库存预占与下单载荷准备；死锁场景按策略重试。
             $queuePayload = $this->executeWithDeadlockRetry(
                 function () use ($userId, $activityId, $itemId, $buyCount, $requestId, $payTypeValue, $payType, &$redisReserved, &$lockedReserved, $heartbeatLocks) {
                     $heartbeatLocks();
@@ -457,6 +476,7 @@ class FlashSaleService
                         if ($now < (string)$activity['start_time'] || $now > (string)$activity['end_time']) {
                             throw new ValidateException('活动未开始或已结束');
                         }
+                        // 已购用户不允许再参与同商品秒杀。
                         if ($this->hasPurchasedConflict($userId, (int)$item['goods_type'], (int)$item['goods_id'])) {
                             throw new ValidateException('你已购买该内容，无需重复抢购');
                         }
@@ -484,6 +504,7 @@ class FlashSaleService
                             throw new ValidateException('超过限购数量');
                         }
 
+                        // 先在 Redis 预占，降低热点行锁冲突。
                         $redisReserved = $this->reserveStockWithRedis((int)$item['id'], $userId, $buyCount, $available);
                         $affected = Db::name('flash_sale_item')
                             ->where('id', $itemId)
@@ -503,8 +524,10 @@ class FlashSaleService
                         }
                         $goodsName = trim((string)$item['title_snapshot']);
                         if ($goodsName === '') {
+                            // 快照为空时按商品类型回填标题。
                             $goodsName = $this->resolveGoodsName((int)$item['goods_type'], (int)$item['goods_id']);
                         }
+                        // 生成库存预留过期时间，供后续释放与前端倒计时使用。
                         $reserveExpireTime = date('Y-m-d H:i:s', time() + $this->getReserveSeconds());
                         return [
                             'request_id' => $requestId,
@@ -530,12 +553,15 @@ class FlashSaleService
                         $lockedReserved = false;
                     }
                     if ($redisReserved) {
+                        // 死锁重试前先回滚 Redis 预占，避免库存虚扣。
                         $this->rollbackReservedStock($itemId, $userId, $buyCount);
                         $redisReserved = false;
                     }
                 }
             );
+            // 出事务后再续一次锁，避免临近过期导致发布阶段并发问题。
             $heartbeatLocks();
+            // 推送到异步队列，失败时按配置重试。
             $published = $this->publishQueueWithRetry($queuePayload);
             if (!$published) {
                 $lastPublishError = FlashSaleOrderQueueService::getLastPublishError();
@@ -561,6 +587,7 @@ class FlashSaleService
                 ]);
                 throw new ValidateException('秒杀排队服务繁忙，请稍后重试');
             }
+            // 写入排队态缓存，供前端 result 接口读取。
             $this->setRequestState($requestId, [
                 'status' => self::ORDER_STATUS_QUEUEING,
                 'user_id' => $userId,
@@ -568,6 +595,7 @@ class FlashSaleService
                 'reserve_expire_time' => (string)($queuePayload['reserve_expire_time'] ?? ''),
                 'order_id' => 0,
             ]);
+            // 标记用户-商品处理中，抑制短时间重复点击。
             $this->setUserItemPendingMarker(
                 (int)($queuePayload['item_id'] ?? $itemId),
                 (int)($queuePayload['user_id'] ?? $userId),
@@ -591,9 +619,12 @@ class FlashSaleService
                 Db::name('flash_sale_item')->where('id', $itemId)->dec('locked_stock', $buyCount)->update();
             }
             if ($redisReserved) {
+                // 异常路径回滚 Redis 预占库存。
                 $this->rollbackReservedStock($itemId, $userId, $buyCount);
             }
+            // 失败时清理用户-商品处理中标记。
             $this->clearUserItemPendingMarker($itemId, $userId);
+            // 失败态写入 request_state，前端可通过 result 读到具体失败信息。
             $this->setRequestState($requestId, [
                 'status' => 3,
                 'user_id' => $userId,
@@ -603,6 +634,7 @@ class FlashSaleService
             ]);
             throw $e;
         } finally {
+            // finally 中统一释放两把互斥锁，避免异常遗漏。
             $this->releaseUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
             $this->releaseRequestLock($requestId, $requestLockToken);
         }
