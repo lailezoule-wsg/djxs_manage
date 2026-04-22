@@ -28,6 +28,7 @@ class FlashSaleService
     private const REQUEST_BORN_PREFIX = 'flash:sale:request:born:';
     private const USER_ITEM_LOCK_PREFIX = 'flash:sale:user:item:lock:';
     private const USER_ITEM_PENDING_PREFIX = 'flash:sale:user:item:pending:';
+    private const TOKEN_TTL_SECONDS = 90;
     private const REQUEST_STATE_TTL = 900;
     private const ORDER_STATUS_QUEUEING = 8;
     private const REQUEST_LOCK_TTL_SECONDS = 120;
@@ -172,11 +173,12 @@ class FlashSaleService
         $this->assertActivityItemValid($activityId, $itemId);
         $token = bin2hex(random_bytes(16));
         $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
-        Cache::set($cacheKey, 1, 90);
+        $tokenTtlSeconds = $this->getTokenTtlSeconds();
+        Cache::set($cacheKey, 1, $tokenTtlSeconds);
 
         return [
             'token' => $token,
-            'expire_seconds' => 90,
+            'expire_seconds' => $tokenTtlSeconds,
             'server_time' => time(),
         ];
     }
@@ -306,20 +308,27 @@ class FlashSaleService
             ];
         }
         if ($token === '') {
+            $this->setRequestState($requestId, [
+                'status' => 3,
+                'user_id' => $userId,
+                'message' => 'token 不能为空',
+                'reserve_expire_time' => '',
+                'order_id' => 0,
+            ]);
             throw new ValidateException('token 不能为空');
         }
         if (!$this->isValidToken($token)) {
+            $this->setRequestState($requestId, [
+                'status' => 3,
+                'user_id' => $userId,
+                'message' => 'token 不合法',
+                'reserve_expire_time' => '',
+                'order_id' => 0,
+            ]);
             throw new ValidateException('token 不合法');
         }
         $this->assertCreateBlacklist($userId, $activityId, $itemId, $clientIp, $deviceId);
         $this->assertCreateRateLimit($userId, $activityId, $itemId, $clientIp, $deviceId);
-        $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
-        if (!$this->consumeToken($cacheKey)) {
-            throw new ValidateException('抢购令牌无效或已过期');
-        }
-        if ($this->hasUserItemPendingMarker($itemId, $userId)) {
-            throw new ValidateException('你已有待支付订单，请先完成支付');
-        }
         $this->assertRequestIdWindow($requestId);
 
         $requestLockToken = $this->acquireRequestLock($requestId);
@@ -330,6 +339,24 @@ class FlashSaleService
         if ($userItemLockToken === '') {
             $this->releaseRequestLock($requestId, $requestLockToken);
             throw new ValidateException('请求处理中，请勿重复提交');
+        }
+        $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
+        if (!$this->consumeToken($cacheKey)) {
+            $this->releaseUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
+            $this->releaseRequestLock($requestId, $requestLockToken);
+            $this->setRequestState($requestId, [
+                'status' => 3,
+                'user_id' => $userId,
+                'message' => '抢购令牌无效或已过期',
+                'reserve_expire_time' => '',
+                'order_id' => 0,
+            ]);
+            throw new ValidateException('抢购令牌无效或已过期');
+        }
+        if ($this->hasUserItemPendingMarker($itemId, $userId)) {
+            $this->releaseUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
+            $this->releaseRequestLock($requestId, $requestLockToken);
+            throw new ValidateException('你已有待支付订单，请先完成支付');
         }
         $redisReserved = false;
         $lockedReserved = false;
@@ -644,7 +671,16 @@ class FlashSaleService
         if (!$row) {
             $cachedState = $this->getRequestState($requestId);
             if (empty($cachedState)) {
-                throw new ValidateException('记录不存在');
+                return [
+                    'request_id' => $requestId,
+                    'status' => 3,
+                    'order_id' => 0,
+                    'order_sn' => '',
+                    'message' => '抢购请求不存在或已失效，请重新获取令牌后下单',
+                    'reserve_expire_time' => '',
+                    'expire_seconds' => 0,
+                    'next_action' => 'stop',
+                ];
             }
             $cachedUserId = (int)($cachedState['user_id'] ?? 0);
             if ($cachedUserId > 0 && $cachedUserId !== $userId) {
@@ -1262,6 +1298,12 @@ class FlashSaleService
         $minutes = (int)env('FLASH_SALE_RESERVE_MINUTES', 5);
         $minutes = max(2, min(5, $minutes));
         return $minutes * 60;
+    }
+
+    private function getTokenTtlSeconds(): int
+    {
+        $ttl = (int)env('FLASH_SALE_TOKEN_TTL_SECONDS', self::TOKEN_TTL_SECONDS);
+        return max(30, min(300, $ttl));
     }
 
     private function calcExpireSeconds(string $reserveExpireTime, string $fallbackCreateTime = ''): int
