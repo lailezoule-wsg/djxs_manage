@@ -171,7 +171,7 @@ Route::group('news', function () {
 Route::group('flash-sale', function () {
     Route::get('list', 'FlashSale/list');
     Route::get('detail/:activityId', 'FlashSale/detail');
-    Route::get('stream', 'FlashSale/stream');
+    Route::get('stream', 'FlashSale/stream')->middleware('auth');
     Route::post('token', 'FlashSale/token')->middleware('auth');
     Route::post('order/precheck', 'FlashSale/orderPrecheck')->middleware('auth');
     Route::post('order/create', 'FlashSale/createOrder')->middleware('auth');

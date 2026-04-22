@@ -61,7 +61,9 @@ class FlashSale extends BaseApiController
             $result = $this->service->issueToken(
                 (int)$userId,
                 (int)($data['activity_id'] ?? 0),
-                (int)($data['item_id'] ?? 0)
+                (int)($data['item_id'] ?? 0),
+                (string)$this->request->ip(),
+                trim((string)($this->request->header('x-device-id') ?: $this->request->header('x-device')))
             );
             return $this->success($result, '获取成功');
         } catch (\Throwable $e) {

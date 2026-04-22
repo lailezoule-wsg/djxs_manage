@@ -25,8 +25,16 @@ class FlashSaleService
     private const PENDING_KEY_PREFIX = 'flash:sale:pending:';
     private const REQUEST_STATE_PREFIX = 'flash:sale:request:state:';
     private const REQUEST_LOCK_PREFIX = 'flash:sale:request:lock:';
+    private const REQUEST_BORN_PREFIX = 'flash:sale:request:born:';
+    private const USER_ITEM_LOCK_PREFIX = 'flash:sale:user:item:lock:';
+    private const USER_ITEM_PENDING_PREFIX = 'flash:sale:user:item:pending:';
     private const REQUEST_STATE_TTL = 900;
     private const ORDER_STATUS_QUEUEING = 8;
+    private const REQUEST_LOCK_TTL_SECONDS = 120;
+    private const USER_ITEM_LOCK_TTL_SECONDS = 60;
+    private const MAX_CLIENT_IP_LENGTH = 64;
+    private const MAX_DEVICE_ID_LENGTH = 128;
+    private const MAX_RISK_EXTRA_JSON_LENGTH = 2000;
     private static ?bool $hasReserveExpireField = null;
 
     /**
@@ -152,14 +160,17 @@ class FlashSaleService
     /**
      * 签发秒杀下单令牌
      */
-    public function issueToken(int $userId, int $activityId, int $itemId): array
+    public function issueToken(int $userId, int $activityId, int $itemId, string $clientIp = '', string $deviceId = ''): array
     {
         $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
         if ($activityId <= 0 || $itemId <= 0) {
             throw new ValidateException('参数不完整');
         }
+        $clientIp = $this->normalizeClientIp($clientIp);
+        $deviceId = $this->normalizeDeviceId($deviceId);
+        $this->assertTokenRateLimit($userId, $activityId, $itemId, $clientIp, $deviceId);
         $this->assertActivityItemValid($activityId, $itemId);
-        $token = md5($userId . '|' . $activityId . '|' . $itemId . '|' . microtime(true) . '|' . random_int(1000, 9999));
+        $token = bin2hex(random_bytes(16));
         $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
         Cache::set($cacheKey, 1, 90);
 
@@ -179,8 +190,8 @@ class FlashSaleService
         $activityId = (int)($payload['activity_id'] ?? 0);
         $itemId = (int)($payload['item_id'] ?? 0);
         $buyCount = max(1, (int)($payload['buy_count'] ?? 1));
-        $clientIp = trim((string)($payload['client_ip'] ?? ''));
-        $deviceId = trim((string)($payload['device_id'] ?? ''));
+        $clientIp = $this->normalizeClientIp((string)($payload['client_ip'] ?? ''));
+        $deviceId = $this->normalizeDeviceId((string)($payload['device_id'] ?? ''));
         if ($activityId <= 0 || $itemId <= 0) {
             throw new ValidateException('参数不完整');
         }
@@ -251,33 +262,36 @@ class FlashSaleService
         $buyCount = (int)($payload['buy_count'] ?? 1);
         $requestId = trim((string)($payload['request_id'] ?? ''));
         $token = trim((string)($payload['token'] ?? ''));
-        $clientIp = trim((string)($payload['client_ip'] ?? ''));
-        $deviceId = trim((string)($payload['device_id'] ?? ''));
+        $clientIp = $this->normalizeClientIp((string)($payload['client_ip'] ?? ''));
+        $deviceId = $this->normalizeDeviceId((string)($payload['device_id'] ?? ''));
         $payType = strtolower(trim((string)($payload['pay_type'] ?? 'wechat')));
         $payTypeValue = $payType === 'alipay' ? 2 : 1;
         if ($buyCount !== 1) {
             throw new ValidateException('首期仅支持单件购买');
         }
-        if ($requestId === '' || strlen($requestId) < 8) {
+        if ($activityId <= 0 || $itemId <= 0) {
+            throw new ValidateException('参数不完整');
+        }
+        if (!in_array($payType, ['wechat', 'alipay'], true)) {
+            throw new ValidateException('pay_type 不合法');
+        }
+        if (!$this->isValidRequestId($requestId)) {
             throw new ValidateException('request_id 不合法');
         }
-        if ($token === '') {
-            throw new ValidateException('token 不能为空');
-        }
-        $this->assertCreateBlacklist($userId, $activityId, $itemId, $clientIp, $deviceId);
-        $this->assertCreateRateLimit($userId, $activityId, $itemId, $clientIp, $deviceId);
-        $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
-        if (!Cache::has($cacheKey)) {
-            throw new ValidateException('抢购令牌无效或已过期');
-        }
-        Cache::delete($cacheKey);
 
         $cachedState = $this->getRequestState($requestId);
         if (!empty($cachedState)) {
+            $cachedUserId = (int)($cachedState['user_id'] ?? 0);
+            if ($cachedUserId > 0 && $cachedUserId !== $userId) {
+                throw new ValidateException('request_id 不合法');
+            }
             return $this->buildResponseByRequestState($cachedState, $requestId);
         }
         $exists = FlashSaleOrder::where('request_id', $requestId)->find();
         if ($exists) {
+            if ((int)$exists->user_id !== $userId) {
+                throw new ValidateException('request_id 不合法');
+            }
             $order = Order::where('id', (int)$exists->order_id)->find();
             $reserveExpireTime = (string)($exists->reserve_expire_time ?? '');
             $expireSeconds = $this->calcExpireSeconds($reserveExpireTime, $order ? (string)$order->create_time : '');
@@ -291,16 +305,46 @@ class FlashSaleService
                 'reserve_expire_time' => $reserveExpireTime,
             ];
         }
+        if ($token === '') {
+            throw new ValidateException('token 不能为空');
+        }
+        if (!$this->isValidToken($token)) {
+            throw new ValidateException('token 不合法');
+        }
+        $this->assertCreateBlacklist($userId, $activityId, $itemId, $clientIp, $deviceId);
+        $this->assertCreateRateLimit($userId, $activityId, $itemId, $clientIp, $deviceId);
+        $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
+        if (!$this->consumeToken($cacheKey)) {
+            throw new ValidateException('抢购令牌无效或已过期');
+        }
+        if ($this->hasUserItemPendingMarker($itemId, $userId)) {
+            throw new ValidateException('你已有待支付订单，请先完成支付');
+        }
+        $this->assertRequestIdWindow($requestId);
 
-        if (!$this->acquireRequestLock($requestId)) {
+        $requestLockToken = $this->acquireRequestLock($requestId);
+        if ($requestLockToken === '') {
             return $this->buildQueueingResponse($requestId);
+        }
+        $userItemLockToken = $this->acquireUserItemLock($activityId, $itemId, $userId);
+        if ($userItemLockToken === '') {
+            $this->releaseRequestLock($requestId, $requestLockToken);
+            throw new ValidateException('请求处理中，请勿重复提交');
         }
         $redisReserved = false;
         $lockedReserved = false;
         $queuePayload = [];
+        $heartbeatLocks = function () use ($requestId, $requestLockToken, $activityId, $itemId, $userId, $userItemLockToken): void {
+            $requestOk = $this->refreshRequestLock($requestId, $requestLockToken);
+            $userItemOk = $this->refreshUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
+            if (!$requestOk || !$userItemOk) {
+                throw new ValidateException('请求处理中，请稍后重试');
+            }
+        };
         try {
             $queuePayload = $this->executeWithDeadlockRetry(
-                function () use ($userId, $activityId, $itemId, $buyCount, $requestId, $payTypeValue, $payType, &$redisReserved, &$lockedReserved) {
+                function () use ($userId, $activityId, $itemId, $buyCount, $requestId, $payTypeValue, $payType, &$redisReserved, &$lockedReserved, $heartbeatLocks) {
+                    $heartbeatLocks();
                     $redisReserved = false;
                     $lockedReserved = false;
                     return Db::transaction(function () use ($userId, $activityId, $itemId, $buyCount, $requestId, $payTypeValue, $payType, &$redisReserved, &$lockedReserved) {
@@ -395,6 +439,7 @@ class FlashSaleService
                     }
                 }
             );
+            $heartbeatLocks();
             $published = FlashSaleOrderQueueService::publish($queuePayload);
             if (!$published) {
                 throw new ValidateException('系统繁忙，请稍后重试');
@@ -406,6 +451,11 @@ class FlashSaleService
                 'reserve_expire_time' => (string)($queuePayload['reserve_expire_time'] ?? ''),
                 'order_id' => 0,
             ]);
+            $this->setUserItemPendingMarker(
+                (int)($queuePayload['item_id'] ?? $itemId),
+                (int)($queuePayload['user_id'] ?? $userId),
+                $this->getReserveSeconds() + 30
+            );
             return [
                 'request_id' => $requestId,
                 'order_id' => 0,
@@ -426,6 +476,7 @@ class FlashSaleService
             if ($redisReserved) {
                 $this->rollbackReservedStock($itemId, $userId, $buyCount);
             }
+            $this->clearUserItemPendingMarker($itemId, $userId);
             $this->setRequestState($requestId, [
                 'status' => 3,
                 'user_id' => $userId,
@@ -435,7 +486,8 @@ class FlashSaleService
             ]);
             throw $e;
         } finally {
-            $this->releaseRequestLock($requestId);
+            $this->releaseUserItemLock($activityId, $itemId, $userId, $userItemLockToken);
+            $this->releaseRequestLock($requestId, $requestLockToken);
         }
     }
 
@@ -471,6 +523,7 @@ class FlashSaleService
         $reserveExpireTs = $this->parseTimeToTs($reserveExpireTime);
         if ($reserveExpireTs > 0 && $reserveExpireTs <= time()) {
             $this->rollbackQueuedReservation($itemId, $userId, $buyCount);
+            $this->clearUserItemPendingMarker($itemId, $userId);
             $this->setRequestState($requestId, [
                 'status' => 3,
                 'user_id' => $userId,
@@ -490,25 +543,41 @@ class FlashSaleService
                     if ($this->hasPurchasedConflict($userId, (int)$item['goods_type'], (int)$item['goods_id'])) {
                         throw new ValidateException('你已购买该内容，无需重复抢购');
                     }
+                    $pendingCount = Db::name('flash_sale_order')
+                        ->where('user_id', $userId)
+                        ->where('item_id', $itemId)
+                        ->where('status', 0)
+                        ->count();
+                    if ($pendingCount > 0) {
+                        throw new ValidateException('你已有待支付订单，请先完成支付');
+                    }
+                    $paidCount = Db::name('flash_sale_order')
+                        ->where('user_id', $userId)
+                        ->where('item_id', $itemId)
+                        ->where('status', 1)
+                        ->count();
+                    if ($paidCount >= max(1, (int)$item['limit_per_user'])) {
+                        throw new ValidateException('超过限购数量');
+                    }
                     $payTypeValue = (int)($payload['pay_type_value'] ?? 2);
                     $payAmount = (float)($payload['pay_amount'] ?? 0);
                     $seckillPrice = (float)($payload['seckill_price'] ?? 0);
                     if ($payAmount <= 0 || $seckillPrice <= 0) {
                         throw new ValidateException('秒杀价格异常');
                     }
-                    $orderSn = 'ORD' . date('YmdHis') . random_int(1000, 9999);
-                    $order = Order::create([
-                        'order_sn' => $orderSn,
-                        'user_id' => $userId,
-                        'total_amount' => $payAmount,
-                        'pay_amount' => $payAmount,
-                        'pay_type' => $payTypeValue,
-                        'status' => 0,
-                    ]);
+                    $goodsType = (int)($payload['goods_type'] ?? $item['goods_type']);
+                    $goodsId = (int)($payload['goods_id'] ?? $item['goods_id']);
+                    $order = $this->createPendingOrderWithRetry(
+                        $userId,
+                        $payAmount,
+                        $payTypeValue,
+                        $goodsType,
+                        $goodsId
+                    );
                     OrderGoods::create([
                         'order_id' => (int)$order->id,
-                        'goods_type' => (int)($payload['goods_type'] ?? $item['goods_type']),
-                        'goods_id' => (int)($payload['goods_id'] ?? $item['goods_id']),
+                        'goods_type' => $goodsType,
+                        'goods_id' => $goodsId,
                         'goods_name' => (string)($payload['goods_name'] ?? $item['title_snapshot']),
                         'price' => $seckillPrice,
                         'quantity' => $buyCount,
@@ -545,10 +614,17 @@ class FlashSaleService
             return;
         } catch (\Throwable $e) {
             $this->rollbackQueuedReservation($itemId, $userId, $buyCount);
+            $this->clearUserItemPendingMarker($itemId, $userId);
+            $errorMessage = '订单创建失败，请重新抢购';
+            if ($e instanceof ValidateException) {
+                $errorMessage = $e->getMessage();
+            } elseif ($this->isPendingOrderDuplicateException($e)) {
+                $errorMessage = '你已有待支付订单，请先完成支付';
+            }
             $this->setRequestState($requestId, [
                 'status' => 3,
                 'user_id' => $userId,
-                'message' => $e instanceof ValidateException ? $e->getMessage() : '订单创建失败，请重新抢购',
+                'message' => $errorMessage,
                 'order_id' => 0,
                 'reserve_expire_time' => $reserveExpireTime,
             ]);
@@ -561,8 +637,8 @@ class FlashSaleService
     public function result(int $userId, string $requestId): array
     {
         $this->releaseDueReserveOrders((int)env('FLASH_SALE_RELEASE_BATCH', 100));
-        if ($requestId === '') {
-            throw new ValidateException('request_id 不能为空');
+        if (!$this->isValidRequestId($requestId)) {
+            throw new ValidateException('request_id 不合法');
         }
         $row = FlashSaleOrder::where('user_id', $userId)->where('request_id', $requestId)->find();
         if (!$row) {
@@ -621,18 +697,33 @@ class FlashSaleService
             if (!$row) {
                 return;
             }
-            if ((int)$row['status'] !== 0) {
+            $status = (int)($row['status'] ?? 0);
+            if ($status === 1) {
                 return;
             }
             Db::name('flash_sale_order')->where('id', (int)$row['id'])->update([
                 'status' => 1,
                 'update_time' => date('Y-m-d H:i:s'),
             ]);
-            Db::name('flash_sale_item')->where('id', (int)$row['item_id'])
-                ->dec('locked_stock', (int)$row['buy_count'])
-                ->inc('sold_stock', (int)$row['buy_count'])
-                ->update();
+
+            if ($status === 0) {
+                // 正常支付：占用库存转已售库存
+                Db::name('flash_sale_item')->where('id', (int)$row['item_id'])
+                    ->dec('locked_stock', (int)$row['buy_count'])
+                    ->inc('sold_stock', (int)$row['buy_count'])
+                    ->update();
+            } elseif (in_array($status, [2, 3], true)) {
+                // 临界补偿：订单已取消/超时释放后晚到支付，仅回补已售库存
+                Db::name('flash_sale_item')->where('id', (int)$row['item_id'])
+                    ->inc('sold_stock', (int)$row['buy_count'])
+                    ->update();
+                // 超时释放时 Redis 可售库存已回补，此处需扣回，避免缓存可售偏高
+                $this->consumeReservedStockAfterLatePaid((int)$row['item_id'], (int)$row['buy_count']);
+            } else {
+                return;
+            }
             $this->clearPendingByUser((int)$row['item_id'], (int)$row['user_id']);
+            $this->clearUserItemPendingMarker((int)$row['item_id'], (int)$row['user_id']);
             $this->removeReserveReleaseSchedule($orderId);
             $this->setRequestState((string)($row['request_id'] ?? ''), [
                 'status' => 1,
@@ -668,6 +759,7 @@ class FlashSaleService
                 ->dec('locked_stock', (int)$row['buy_count'])
                 ->update();
             $this->rollbackReservedStock((int)$row['item_id'], (int)$row['user_id'], (int)$row['buy_count']);
+            $this->clearUserItemPendingMarker((int)$row['item_id'], (int)$row['user_id']);
             $this->removeReserveReleaseSchedule($orderId);
             $this->setRequestState((string)($row['request_id'] ?? ''), [
                 'status' => $timeout ? 3 : 2,
@@ -939,52 +1031,126 @@ class FlashSaleService
         }
     }
 
-    private function acquireRequestLock(string $requestId): bool
+    private function buildOrderPendingLockKey(int $userId, int $goodsType, int $goodsId): string
     {
-        if ($requestId === '') {
-            return false;
-        }
-        $lockKey = self::REQUEST_LOCK_PREFIX . $requestId;
-        $redis = $this->getRedisHandler();
-        if ($redis && method_exists($redis, 'setNx')) {
-            try {
-                $ok = (bool)$redis->setNx($lockKey, '1');
-                if ($ok && method_exists($redis, 'expire')) {
-                    $redis->expire($lockKey, 120);
-                }
-                return $ok;
-            } catch (\Throwable $e) {
-            }
-        }
-        try {
-            if (Cache::has($lockKey)) {
-                return false;
-            }
-            Cache::set($lockKey, 1, 120);
-            return true;
-        } catch (\Throwable $e) {
-        }
-        return false;
+        return 'u:' . $userId . '|g:' . $goodsType . ':' . $goodsId;
     }
 
-    private function releaseRequestLock(string $requestId): void
+    private function createPendingOrderWithRetry(
+        int $userId,
+        float $payAmount,
+        int $payTypeValue,
+        int $goodsType,
+        int $goodsId
+    ): Order {
+        $attempts = 5;
+        for ($i = 0; $i < $attempts; $i++) {
+            try {
+                return Order::create([
+                    'order_sn' => $this->generateUniqueOrderSn(),
+                    'user_id' => $userId,
+                    'total_amount' => $payAmount,
+                    'pay_amount' => $payAmount,
+                    'pay_type' => $payTypeValue,
+                    'status' => 0,
+                    'pending_lock_key' => $this->buildOrderPendingLockKey($userId, $goodsType, $goodsId),
+                ]);
+            } catch (\Throwable $e) {
+                if ($this->isOrderSnDuplicateException($e)) {
+                    continue;
+                }
+                throw $e;
+            }
+        }
+        throw new ValidateException('订单创建失败，请稍后重试');
+    }
+
+    private function generateUniqueOrderSn(): string
+    {
+        return 'ORD' . date('YmdHis') . strtoupper(bin2hex(random_bytes(4)));
+    }
+
+    private function isPendingOrderDuplicateException(\Throwable $e): bool
+    {
+        return $this->isDuplicateForIndexes($e, ['uk_pending_lock_key', 'pending_lock_key']);
+    }
+
+    private function isOrderSnDuplicateException(\Throwable $e): bool
+    {
+        return $this->isDuplicateForIndexes($e, ['uk_order_sn', 'order_sn']);
+    }
+
+    private function isDuplicateForIndexes(\Throwable $e, array $indexNames): bool
+    {
+        [$sqlState, $driverCode] = $this->extractSqlStateAndDriverCode($e);
+        $message = strtolower($e->getMessage());
+        $matchedIndex = false;
+        foreach ($indexNames as $indexName) {
+            $needle = strtolower((string)$indexName);
+            if ($needle !== '' && str_contains($message, $needle)) {
+                $matchedIndex = true;
+                break;
+            }
+        }
+        if (($sqlState === '23000' || $driverCode === 1062) && $matchedIndex) {
+            return true;
+        }
+        return $matchedIndex;
+    }
+
+    private function createLockToken(): string
+    {
+        return bin2hex(random_bytes(16));
+    }
+
+    private function acquireRequestLock(string $requestId): string
     {
         if ($requestId === '') {
+            return '';
+        }
+        return $this->acquireOwnedLock(
+            self::REQUEST_LOCK_PREFIX . $requestId,
+            $this->getRequestLockTtlSeconds()
+        );
+    }
+
+    private function releaseRequestLock(string $requestId, string $lockToken): void
+    {
+        if ($requestId === '' || $lockToken === '') {
             return;
         }
         $lockKey = self::REQUEST_LOCK_PREFIX . $requestId;
         $redis = $this->getRedisHandler();
-        if ($redis && method_exists($redis, 'del')) {
+        if ($redis && method_exists($redis, 'eval')) {
             try {
-                $redis->del($lockKey);
+                $redis->eval(
+                    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
+                    [$lockKey, $lockToken],
+                    1
+                );
                 return;
             } catch (\Throwable $e) {
             }
         }
         try {
-            Cache::delete($lockKey);
+            $cachedToken = (string)(Cache::get($lockKey) ?? '');
+            if ($cachedToken !== '' && hash_equals($cachedToken, $lockToken)) {
+                Cache::delete($lockKey);
+            }
         } catch (\Throwable $e) {
         }
+    }
+
+    private function refreshRequestLock(string $requestId, string $lockToken): bool
+    {
+        if ($requestId === '' || $lockToken === '') {
+            return false;
+        }
+        return $this->refreshOwnedLock(
+            self::REQUEST_LOCK_PREFIX . $requestId,
+            $lockToken,
+            $this->getRequestLockTtlSeconds()
+        );
     }
 
     private function rollbackQueuedReservation(int $itemId, int $userId, int $buyCount): void
@@ -1021,6 +1187,30 @@ class FlashSaleService
     private function buildTokenCacheKey(int $userId, int $activityId, int $itemId, string $token): string
     {
         return self::TOKEN_CACHE_PREFIX . $userId . ':' . $activityId . ':' . $itemId . ':' . $token;
+    }
+
+    private function consumeToken(string $cacheKey): bool
+    {
+        if ($cacheKey === '') {
+            return false;
+        }
+        $redis = $this->getRedisHandler();
+        if ($redis && method_exists($redis, 'eval')) {
+            try {
+                $ret = (int)$redis->eval("return redis.call('DEL', KEYS[1])", [$cacheKey], 1);
+                return $ret === 1;
+            } catch (\Throwable $e) {
+            }
+        }
+        try {
+            if (!Cache::has($cacheKey)) {
+                return false;
+            }
+            Cache::delete($cacheKey);
+            return true;
+        } catch (\Throwable $e) {
+        }
+        return false;
     }
 
     private function resolveButtonStatus(array $row, int $availableStock, string $now): string
@@ -1138,6 +1328,39 @@ class FlashSaleService
         }
     }
 
+    private function assertTokenRateLimit(int $userId, int $activityId, int $itemId, string $clientIp, string $deviceId): void
+    {
+        $scene = $activityId . ':' . $itemId;
+        $userLimit = max(1, (int)env('FLASH_SALE_TOKEN_USER_LIMIT_PER_MIN', 30));
+        $this->assertRateWindow(
+            'flash:sale:token:user:' . $scene . ':' . $userId,
+            $userLimit,
+            '操作过于频繁，请稍后重试',
+            'token_user_rate_limit',
+            ['user_id' => $userId, 'activity_id' => $activityId, 'item_id' => $itemId, 'client_ip' => $clientIp, 'device_id' => $deviceId]
+        );
+        if ($clientIp !== '') {
+            $ipLimit = max(1, (int)env('FLASH_SALE_TOKEN_IP_LIMIT_PER_MIN', 120));
+            $this->assertRateWindow(
+                'flash:sale:token:ip:' . $scene . ':' . $clientIp,
+                $ipLimit,
+                '请求过于频繁，请稍后重试',
+                'token_ip_rate_limit',
+                ['user_id' => $userId, 'activity_id' => $activityId, 'item_id' => $itemId, 'client_ip' => $clientIp, 'device_id' => $deviceId]
+            );
+        }
+        if ($deviceId !== '') {
+            $deviceLimit = max(1, (int)env('FLASH_SALE_TOKEN_DEVICE_LIMIT_PER_MIN', 80));
+            $this->assertRateWindow(
+                'flash:sale:token:device:' . $scene . ':' . md5($deviceId),
+                $deviceLimit,
+                '设备请求过于频繁，请稍后重试',
+                'token_device_rate_limit',
+                ['user_id' => $userId, 'activity_id' => $activityId, 'item_id' => $itemId, 'client_ip' => $clientIp, 'device_id' => $deviceId]
+            );
+        }
+    }
+
     private function assertRateWindow(string $key, int $limit, string $errorMessage, string $reason, array $context = []): void
     {
         try {
@@ -1188,20 +1411,30 @@ class FlashSaleService
 
     private function recordRiskEvent(string $reason, array $context = []): void
     {
+        if (!$this->shouldRecordRiskEvent($reason, $context)) {
+            return;
+        }
         try {
             $extra = $context['extra'] ?? [];
             if (!is_array($extra)) {
                 $extra = ['raw' => (string)$extra];
             }
+            $extraJson = json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if (!is_string($extraJson) || $extraJson === '') {
+                $extraJson = '{}';
+            }
+            if (strlen($extraJson) > self::MAX_RISK_EXTRA_JSON_LENGTH) {
+                $extraJson = substr($extraJson, 0, self::MAX_RISK_EXTRA_JSON_LENGTH);
+            }
             Db::name('flash_sale_risk_log')->insert([
                 'scene' => 'create_order',
-                'reason' => trim($reason) === '' ? 'risk_blocked' : $reason,
+                'reason' => substr(trim($reason) === '' ? 'risk_blocked' : $reason, 0, 64),
                 'user_id' => (int)($context['user_id'] ?? 0),
                 'activity_id' => (int)($context['activity_id'] ?? 0),
                 'item_id' => (int)($context['item_id'] ?? 0),
-                'client_ip' => trim((string)($context['client_ip'] ?? '')),
-                'device_id' => trim((string)($context['device_id'] ?? '')),
-                'extra_json' => json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'client_ip' => $this->normalizeClientIp((string)($context['client_ip'] ?? '')),
+                'device_id' => $this->normalizeDeviceId((string)($context['device_id'] ?? '')),
+                'extra_json' => $extraJson,
                 'create_time' => date('Y-m-d H:i:s'),
             ]);
         } catch (\Throwable $e) {
@@ -1217,6 +1450,134 @@ class FlashSaleService
             'server_time' => time(),
             'extra' => $extra,
         ];
+    }
+
+    private function isValidRequestId(string $requestId): bool
+    {
+        if ($requestId === '') {
+            return false;
+        }
+        if (strlen($requestId) < 8 || strlen($requestId) > 64) {
+            return false;
+        }
+        if (preg_match('/^[A-Za-z0-9_-]+$/', $requestId) !== 1) {
+            return false;
+        }
+        return $this->hasSufficientRequestIdEntropy($requestId);
+    }
+
+    private function hasSufficientRequestIdEntropy(string $requestId): bool
+    {
+        $strict = (int)env('FLASH_SALE_REQUEST_ID_STRICT', 1) === 1;
+        if (!$strict) {
+            return true;
+        }
+        $minLength = max(8, min(64, (int)env('FLASH_SALE_REQUEST_ID_MIN_LENGTH', 12)));
+        if (strlen($requestId) < $minLength) {
+            return false;
+        }
+        $classes = 0;
+        if (preg_match('/[a-z]/', $requestId) === 1) {
+            $classes++;
+        }
+        if (preg_match('/[A-Z]/', $requestId) === 1) {
+            $classes++;
+        }
+        if (preg_match('/[0-9]/', $requestId) === 1) {
+            $classes++;
+        }
+        if (preg_match('/[_-]/', $requestId) === 1) {
+            $classes++;
+        }
+        if ($classes < 2) {
+            return false;
+        }
+        return count(array_unique(str_split($requestId))) >= 6;
+    }
+
+    private function assertRequestIdWindow(string $requestId): void
+    {
+        $maxAge = max(60, min(86400, (int)env('FLASH_SALE_REQUEST_ID_MAX_AGE_SECONDS', 1800)));
+        $cacheTtl = max($maxAge, 300);
+        $cacheKey = self::REQUEST_BORN_PREFIX . $requestId;
+        $now = time();
+        $redis = $this->getRedisHandler();
+        if ($redis && method_exists($redis, 'eval')) {
+            try {
+                $ret = $redis->eval(
+                    "local ok = redis.call('SET', KEYS[1], ARGV[1], 'NX', 'EX', tonumber(ARGV[2])); if ok then return 1 end local born = redis.call('GET', KEYS[1]); if not born then return 0 end return tonumber(born) or 0",
+                    [$cacheKey, (string)$now, (string)$cacheTtl],
+                    1
+                );
+                $code = (int)$ret;
+                if ($code === 1 || $code === 0) {
+                    return;
+                }
+                $bornTs = $code;
+                if ($bornTs > 0 && ($now - $bornTs) > $maxAge) {
+                    throw new ValidateException('request_id 已过期，请刷新后重试');
+                }
+                return;
+            } catch (ValidateException $e) {
+                throw $e;
+            } catch (\Throwable $e) {
+            }
+        }
+        try {
+            $born = (int)(Cache::get($cacheKey) ?? 0);
+            if ($born <= 0) {
+                Cache::set($cacheKey, $now, $cacheTtl);
+                return;
+            }
+            if (($now - $born) > $maxAge) {
+                throw new ValidateException('request_id 已过期，请刷新后重试');
+            }
+        } catch (ValidateException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+        }
+    }
+
+    private function isValidToken(string $token): bool
+    {
+        return preg_match('/^[a-fA-F0-9]{32}$/', $token) === 1;
+    }
+
+    private function normalizeClientIp(string $clientIp): string
+    {
+        return substr(trim($clientIp), 0, self::MAX_CLIENT_IP_LENGTH);
+    }
+
+    private function normalizeDeviceId(string $deviceId): string
+    {
+        return substr(trim($deviceId), 0, self::MAX_DEVICE_ID_LENGTH);
+    }
+
+    private function shouldRecordRiskEvent(string $reason, array $context = []): bool
+    {
+        $reason = trim($reason);
+        if ($reason !== '' && str_contains($reason, 'blacklist')) {
+            return true;
+        }
+        $samplePercent = (int)env('FLASH_SALE_RISK_LOG_SAMPLE_PERCENT', 100);
+        $samplePercent = max(0, min(100, $samplePercent));
+        if ($samplePercent >= 100) {
+            return true;
+        }
+        if ($samplePercent <= 0) {
+            return false;
+        }
+        $seed = implode('|', [
+            $reason,
+            (string)($context['user_id'] ?? 0),
+            (string)($context['activity_id'] ?? 0),
+            (string)($context['item_id'] ?? 0),
+            $this->normalizeClientIp((string)($context['client_ip'] ?? '')),
+            $this->normalizeDeviceId((string)($context['device_id'] ?? '')),
+            date('YmdHi'),
+        ]);
+        $bucket = (int)((int)sprintf('%u', crc32($seed)) % 100);
+        return $bucket < $samplePercent;
     }
 
     private function findCreateBlacklistHit(int $userId, string $clientIp, string $deviceId): array
@@ -1389,16 +1750,36 @@ class FlashSaleService
         }
     }
 
+    private function consumeReservedStockAfterLatePaid(int $itemId, int $buyCount): void
+    {
+        if ($itemId <= 0 || $buyCount <= 0) {
+            return;
+        }
+        $redis = $this->getRedisHandler();
+        if (!$redis || !method_exists($redis, 'eval')) {
+            return;
+        }
+        $stockKey = $this->getStockCacheKey($itemId);
+        try {
+            $redis->eval(
+                "local stock = tonumber(redis.call('GET', KEYS[1]) or '-1'); if stock < 0 then return 0 end; local qty = tonumber(ARGV[1]) or 0; if qty <= 0 then return 0 end; local next = stock - qty; if next < 0 then next = 0 end; redis.call('SET', KEYS[1], tostring(next)); return 1",
+                [$stockKey, (string)$buyCount],
+                1
+            );
+        } catch (\Throwable $e) {
+        }
+    }
+
     private function clearPendingByUser(int $itemId, int $userId): void
     {
         $redis = $this->getRedisHandler();
-        if (!$redis || !method_exists($redis, 'del')) {
-            return;
+        if ($redis && method_exists($redis, 'del')) {
+            try {
+                $redis->del($this->getPendingCacheKey($itemId, $userId));
+            } catch (\Throwable $e) {
+            }
         }
-        try {
-            $redis->del($this->getPendingCacheKey($itemId, $userId));
-        } catch (\Throwable $e) {
-        }
+        $this->clearUserItemPendingMarker($itemId, $userId);
     }
 
     private function getStockCacheKey(int $itemId): string
@@ -1409,6 +1790,160 @@ class FlashSaleService
     private function getPendingCacheKey(int $itemId, int $userId): string
     {
         return self::PENDING_KEY_PREFIX . $itemId . ':' . $userId;
+    }
+
+    private function buildUserItemLockKey(int $activityId, int $itemId, int $userId): string
+    {
+        return self::USER_ITEM_LOCK_PREFIX . $activityId . ':' . $itemId . ':' . $userId;
+    }
+
+    private function buildUserItemPendingKey(int $itemId, int $userId): string
+    {
+        return self::USER_ITEM_PENDING_PREFIX . $itemId . ':' . $userId;
+    }
+
+    private function acquireUserItemLock(int $activityId, int $itemId, int $userId): string
+    {
+        return $this->acquireOwnedLock(
+            $this->buildUserItemLockKey($activityId, $itemId, $userId),
+            $this->getUserItemLockTtlSeconds()
+        );
+    }
+
+    private function releaseUserItemLock(int $activityId, int $itemId, int $userId, string $lockToken): void
+    {
+        if ($lockToken === '') {
+            return;
+        }
+        $lockKey = $this->buildUserItemLockKey($activityId, $itemId, $userId);
+        $redis = $this->getRedisHandler();
+        if ($redis && method_exists($redis, 'eval')) {
+            try {
+                $redis->eval(
+                    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
+                    [$lockKey, $lockToken],
+                    1
+                );
+                return;
+            } catch (\Throwable $e) {
+            }
+        }
+        try {
+            $cachedToken = (string)(Cache::get($lockKey) ?? '');
+            if ($cachedToken !== '' && hash_equals($cachedToken, $lockToken)) {
+                Cache::delete($lockKey);
+            }
+        } catch (\Throwable $e) {
+        }
+    }
+
+    private function refreshUserItemLock(int $activityId, int $itemId, int $userId, string $lockToken): bool
+    {
+        if ($lockToken === '') {
+            return false;
+        }
+        return $this->refreshOwnedLock(
+            $this->buildUserItemLockKey($activityId, $itemId, $userId),
+            $lockToken,
+            $this->getUserItemLockTtlSeconds()
+        );
+    }
+
+    private function refreshOwnedLock(string $lockKey, string $lockToken, int $ttlSeconds): bool
+    {
+        if ($lockKey === '' || $lockToken === '' || $ttlSeconds <= 0) {
+            return false;
+        }
+        $redis = $this->getRedisHandler();
+        if ($redis && method_exists($redis, 'eval')) {
+            try {
+                $ret = (int)$redis->eval(
+                    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) else return 0 end",
+                    [$lockKey, $lockToken, (string)$ttlSeconds],
+                    1
+                );
+                return $ret === 1;
+            } catch (\Throwable $e) {
+            }
+        }
+        try {
+            $cachedToken = (string)(Cache::get($lockKey) ?? '');
+            if ($cachedToken !== '' && hash_equals($cachedToken, $lockToken)) {
+                Cache::set($lockKey, $lockToken, $ttlSeconds);
+                return true;
+            }
+        } catch (\Throwable $e) {
+        }
+        return false;
+    }
+
+    private function acquireOwnedLock(string $lockKey, int $ttlSeconds): string
+    {
+        if ($lockKey === '' || $ttlSeconds <= 0) {
+            return '';
+        }
+        $lockToken = $this->createLockToken();
+        $redis = $this->getRedisHandler();
+        if ($redis && method_exists($redis, 'eval')) {
+            try {
+                $ret = $redis->eval(
+                    "local ok = redis.call('SET', KEYS[1], ARGV[1], 'NX', 'EX', tonumber(ARGV[2])); if ok then return ARGV[1] else return '' end",
+                    [$lockKey, $lockToken, (string)$ttlSeconds],
+                    1
+                );
+                return is_string($ret) ? $ret : '';
+            } catch (\Throwable $e) {
+            }
+        }
+        try {
+            if (Cache::has($lockKey)) {
+                return '';
+            }
+            Cache::set($lockKey, $lockToken, $ttlSeconds);
+            return $lockToken;
+        } catch (\Throwable $e) {
+        }
+        return '';
+    }
+
+    private function getRequestLockTtlSeconds(): int
+    {
+        $ttl = (int)env('FLASH_SALE_REQUEST_LOCK_TTL_SECONDS', self::REQUEST_LOCK_TTL_SECONDS);
+        return max(30, min(300, $ttl));
+    }
+
+    private function getUserItemLockTtlSeconds(): int
+    {
+        $ttl = (int)env('FLASH_SALE_USER_ITEM_LOCK_TTL_SECONDS', self::USER_ITEM_LOCK_TTL_SECONDS);
+        return max(20, min(180, $ttl));
+    }
+
+    private function setUserItemPendingMarker(int $itemId, int $userId, int $ttlSeconds): void
+    {
+        $pendingKey = $this->buildUserItemPendingKey($itemId, $userId);
+        try {
+            Cache::set($pendingKey, 1, max(30, $ttlSeconds));
+        } catch (\Throwable $e) {
+        }
+    }
+
+    private function clearUserItemPendingMarker(int $itemId, int $userId): void
+    {
+        $pendingKey = $this->buildUserItemPendingKey($itemId, $userId);
+        try {
+            Cache::delete($pendingKey);
+        } catch (\Throwable $e) {
+        }
+    }
+
+    private function hasUserItemPendingMarker(int $itemId, int $userId): bool
+    {
+        $pendingKey = $this->buildUserItemPendingKey($itemId, $userId);
+        try {
+            return (bool)Cache::has($pendingKey);
+        } catch (\Throwable $e) {
+        }
+        return false;
     }
 
     private function getReserveStockLuaScript(): string
@@ -1448,10 +1983,17 @@ LUA;
             if ($reserveExpireTs > $nowTs) {
                 return false;
             }
-            Db::name('order')
+            $affected = (int)Db::name('order')
                 ->where('id', $orderId)
                 ->where('status', 0)
-                ->update(['status' => 2]);
+                ->update([
+                    'status' => 2,
+                    // 订单离开待支付后必须释放防重键，避免后续下单被唯一键误拦截
+                    'pending_lock_key' => null,
+                ]);
+            if ($affected < 1) {
+                return false;
+            }
 
             Db::name('flash_sale_order')->where('id', (int)$row['id'])->update([
                 'status' => 3,
@@ -1461,6 +2003,7 @@ LUA;
                 ->dec('locked_stock', (int)$row['buy_count'])
                 ->update();
             $this->rollbackReservedStock((int)$row['item_id'], (int)$row['user_id'], (int)$row['buy_count']);
+            $this->clearUserItemPendingMarker((int)$row['item_id'], (int)$row['user_id']);
             $this->setRequestState((string)($row['request_id'] ?? ''), [
                 'status' => 3,
                 'user_id' => (int)($row['user_id'] ?? 0),
@@ -1558,10 +2101,44 @@ LUA;
 
     private function isDeadlockException(\Throwable $e): bool
     {
+        [$sqlState, $driverCode] = $this->extractSqlStateAndDriverCode($e);
+        if ($sqlState === '40001' || $driverCode === 1213 || $driverCode === 1205) {
+            return true;
+        }
         $message = strtolower($e->getMessage());
         return str_contains($message, 'deadlock found when trying to get lock')
             || str_contains($message, 'sqlstate[40001]')
             || str_contains($message, 'lock wait timeout exceeded');
+    }
+
+    /**
+     * 提取 SQLSTATE 与驱动错误码（MySQL 常见：23000/1062、40001/1213、1205）。
+     *
+     * @return array{0:string,1:int}
+     */
+    private function extractSqlStateAndDriverCode(\Throwable $e): array
+    {
+        $sqlState = '';
+        $driverCode = 0;
+        if ($e instanceof \PDOException) {
+            $errorInfo = $e->errorInfo;
+            if (is_array($errorInfo)) {
+                $sqlState = (string)($errorInfo[0] ?? '');
+                $driverCode = (int)($errorInfo[1] ?? 0);
+            }
+            if ($driverCode <= 0) {
+                $driverCode = (int)$e->getCode();
+            }
+            return [$sqlState, $driverCode];
+        }
+        $message = strtolower($e->getMessage());
+        if (preg_match('/sqlstate\\[(\\w+)\\]/', $message, $m) === 1) {
+            $sqlState = strtoupper((string)($m[1] ?? ''));
+        }
+        if (preg_match('/\\b(1062|1213|1205)\\b/', $message, $m) === 1) {
+            $driverCode = (int)($m[1] ?? 0);
+        }
+        return [$sqlState, $driverCode];
     }
 }
 

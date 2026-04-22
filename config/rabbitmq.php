@@ -12,8 +12,16 @@ return [
     'flash_sale_order_create_queue' => env('RABBITMQ_QUEUE_FLASH_SALE_ORDER_CREATE', 'djxs.flash_sale.order_create'),
     // 秒杀下单队列分片数（>1 时按 activity_id 分片，消费者订阅全部分片队列）。
     'flash_sale_order_create_queue_shards' => max(1, (int) env('RABBITMQ_QUEUE_FLASH_SALE_ORDER_CREATE_SHARDS', 1)),
+    // 秒杀下单队列是否开启 DLQ（变更后可能需重建队列）。
+    'flash_sale_order_enable_dlq' => filter_var(env('RABBITMQ_FLASH_SALE_ORDER_ENABLE_DLQ', true), FILTER_VALIDATE_BOOLEAN),
+    // 秒杀下单 DLQ 队列后缀（最终队列名 = 原队列名 + 后缀）。
+    'flash_sale_order_create_dlq_suffix' => env('RABBITMQ_QUEUE_FLASH_SALE_ORDER_CREATE_DLQ_SUFFIX', '.dlq'),
     // 秒杀订单消费者 prefetch（单消费者未 ack 消息上限）。
     'flash_sale_order_consume_prefetch' => max(1, (int) env('FLASH_SALE_ORDER_CONSUME_PREFETCH', 20)),
+    // 秒杀订单消费者最大重试次数（超过后 reject 到 DLQ/丢弃）。
+    'flash_sale_order_consume_retry_limit' => max(1, (int) env('FLASH_SALE_ORDER_CONSUME_RETRY_LIMIT', 5)),
+    // 秒杀订单消费者重试计数缓存 TTL（秒）。
+    'flash_sale_order_consume_retry_ttl' => max(60, (int) env('FLASH_SALE_ORDER_CONSUME_RETRY_TTL', 600)),
     // 多渠道分发队列（任务创建后异步分发）。
     'channel_distribution_queue' => env('RABBITMQ_QUEUE_CHANNEL_DISTRIBUTION', 'djxs.channel_distribution.publish'),
     'channel_distribution_dlq' => env('RABBITMQ_QUEUE_CHANNEL_DISTRIBUTION_DLQ', 'djxs.channel_distribution.publish.dlq'),

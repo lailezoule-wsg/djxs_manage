@@ -173,7 +173,11 @@ class OrderAdminService extends BaseAdminService
         if ((int)$order['status'] !== 1) {
             throw new ValidateException('仅已支付订单可退款');
         }
-        $update = ['status' => 3];
+        $update = [
+            'status' => 3,
+            // 订单离开待支付状态后释放防重键，避免后续同商品下单被误拦
+            'pending_lock_key' => null,
+        ];
         if (isset($order['refund_time'])) {
             $update['refund_time'] = date('Y-m-d H:i:s');
         }

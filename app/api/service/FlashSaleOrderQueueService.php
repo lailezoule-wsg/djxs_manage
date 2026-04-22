@@ -7,6 +7,7 @@ namespace app\api\service;
 use PhpAmqpLib\Channel\AMQPChannel;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
 use PhpAmqpLib\Message\AMQPMessage;
+use PhpAmqpLib\Wire\AMQPTable;
 use think\facade\Log;
 
 /**
@@ -20,7 +21,22 @@ final class FlashSaleOrderQueueService
     public static function declareQueue(AMQPChannel $channel, ?string $queueName = null): string
     {
         $queue = $queueName ?: self::resolveQueueName();
-        $channel->queue_declare($queue, false, true, false, false);
+        $cfg = config('rabbitmq');
+        $enableDlq = is_array($cfg)
+            ? filter_var($cfg['flash_sale_order_enable_dlq'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            : false;
+        if (!$enableDlq) {
+            $channel->queue_declare($queue, false, true, false, false);
+            return $queue;
+        }
+
+        $dlqQueue = self::resolveDlqQueueName($queue);
+        $channel->queue_declare($dlqQueue, false, true, false, false);
+        $args = new AMQPTable([
+            'x-dead-letter-exchange' => '',
+            'x-dead-letter-routing-key' => $dlqQueue,
+        ]);
+        $channel->queue_declare($queue, false, true, false, false, false, $args);
         return $queue;
     }
 
@@ -67,6 +83,23 @@ final class FlashSaleOrderQueueService
         $activityId = max(0, (int)($payload['activity_id'] ?? 0));
         $shard = $activityId % $shards;
         return $baseQueue . '.s' . $shard;
+    }
+
+    /**
+     * 解析秒杀下单队列对应 DLQ 名称
+     */
+    public static function resolveDlqQueueName(string $queueName): string
+    {
+        $queueName = trim($queueName);
+        if ($queueName === '') {
+            $queueName = self::resolveQueueName();
+        }
+        $cfg = config('rabbitmq');
+        $suffix = is_array($cfg) ? trim((string)($cfg['flash_sale_order_create_dlq_suffix'] ?? '.dlq')) : '.dlq';
+        if ($suffix === '') {
+            $suffix = '.dlq';
+        }
+        return $queueName . $suffix;
     }
 
     /**
