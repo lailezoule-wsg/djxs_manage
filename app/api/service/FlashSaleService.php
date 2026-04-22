@@ -402,6 +402,16 @@ class FlashSaleService
                     'cache_key' => $cacheKey,
                 ],
             ]);
+            $tokenSummary = sprintf(
+                'flash-sale token consume failed | reason=%s request_id=%s user_id=%d activity_id=%d item_id=%d token_prefix=%s',
+                (string)$tokenFailure['reason'],
+                $requestId,
+                $userId,
+                $activityId,
+                $itemId,
+                substr($token, 0, 8)
+            );
+            Log::warning($tokenSummary);
             Log::warning('flash-sale token consume failed', [
                 'reason' => (string)$tokenFailure['reason'],
                 'request_id' => $requestId,
@@ -528,19 +538,27 @@ class FlashSaleService
             $heartbeatLocks();
             $published = $this->publishQueueWithRetry($queuePayload);
             if (!$published) {
-                if ($this->isQueueSyncFallbackEnabled()) {
-                    Log::warning('flash-sale queue publish failed, fallback to sync consume', [
-                        'request_id' => $requestId,
-                        'user_id' => $userId,
-                        'activity_id' => $activityId,
-                        'item_id' => $itemId,
-                    ]);
-                    $this->consumeCreateOrderMessage($queuePayload);
-                    $state = $this->getRequestState($requestId);
-                    if (!empty($state)) {
-                        return $this->buildResponseByRequestState($state, $requestId);
-                    }
-                }
+                $lastPublishError = FlashSaleOrderQueueService::getLastPublishError();
+                $summary = sprintf(
+                    'flash-sale queue publish exhausted retries | request_id=%s user_id=%d activity_id=%d item_id=%d queue=%s reason=%s message=%s',
+                    $requestId,
+                    $userId,
+                    $activityId,
+                    $itemId,
+                    (string)($lastPublishError['queue'] ?? ''),
+                    (string)($lastPublishError['reason'] ?? ''),
+                    (string)($lastPublishError['message'] ?? '')
+                );
+                Log::warning($summary);
+                Log::warning('flash-sale queue publish exhausted retries', [
+                    'request_id' => $requestId,
+                    'user_id' => $userId,
+                    'activity_id' => $activityId,
+                    'item_id' => $itemId,
+                    'queue' => (string)($lastPublishError['queue'] ?? ''),
+                    'reason' => (string)($lastPublishError['reason'] ?? ''),
+                    'message' => (string)($lastPublishError['message'] ?? ''),
+                ]);
                 throw new ValidateException('秒杀排队服务繁忙，请稍后重试');
             }
             $this->setRequestState($requestId, [
@@ -1385,10 +1403,19 @@ class FlashSaleService
         $redis = $this->getRedisHandler();
         if ($redis && method_exists($redis, 'eval')) {
             try {
-                $ret = (int)$redis->eval("return redis.call('DEL', KEYS[1])", [$cacheKey], 1);
+                $prefixedCacheKey = $this->buildRedisPrefixedCacheKey($cacheKey);
+                $ret = (int)$redis->eval("return redis.call('DEL', KEYS[1])", [$prefixedCacheKey], 1);
                 if ($ret === 1) {
                     $this->markTokenConsumed($token, $ttlSeconds);
                     return true;
+                }
+                // 兼容前缀配置差异：若前缀键未删到，再尝试原始键一次。
+                if ($prefixedCacheKey !== $cacheKey) {
+                    $retRaw = (int)$redis->eval("return redis.call('DEL', KEYS[1])", [$cacheKey], 1);
+                    if ($retRaw === 1) {
+                        $this->markTokenConsumed($token, $ttlSeconds);
+                        return true;
+                    }
                 }
                 return false;
             } catch (\Throwable $e) {
@@ -1404,6 +1431,15 @@ class FlashSaleService
         } catch (\Throwable $e) {
         }
         return false;
+    }
+
+    private function buildRedisPrefixedCacheKey(string $cacheKey): string
+    {
+        $prefix = (string)config('cache.stores.redis.prefix', '');
+        if ($prefix === '') {
+            return $cacheKey;
+        }
+        return $prefix . $cacheKey;
     }
 
     private function consumeTokenWithRetry(
@@ -1423,34 +1459,6 @@ class FlashSaleService
             if ($this->consumeToken($cacheKey, $token, $ttlSeconds)) {
                 return true;
             }
-        }
-        // 兜底：在已持有请求锁/用户商品锁的前提下，尝试一次强制消费，减少误判“处理中”。
-        if ($this->forceConsumeTokenFallback($cacheKey, $token, $ttlSeconds)) {
-            return true;
-        }
-        return false;
-    }
-
-    private function forceConsumeTokenFallback(string $cacheKey, string $token, int $ttlSeconds): bool
-    {
-        if ($cacheKey === '') {
-            return false;
-        }
-        try {
-            if (!Cache::has($cacheKey)) {
-                return false;
-            }
-            Cache::delete($cacheKey);
-            if (!Cache::has($cacheKey)) {
-                $this->markTokenConsumed($token, $ttlSeconds);
-                return true;
-            }
-        } catch (\Throwable $e) {
-            Log::warning('flash-sale token fallback consume failed', [
-                'cache_key' => $cacheKey,
-                'token_prefix' => substr($token, 0, 8),
-                'error' => $e->getMessage(),
-            ]);
         }
         return false;
     }
@@ -1623,11 +1631,6 @@ class FlashSaleService
     {
         $sleepMs = (int)env('FLASH_SALE_QUEUE_PUBLISH_RETRY_SLEEP_MS', self::QUEUE_PUBLISH_RETRY_SLEEP_MS);
         return max(10, min(300, $sleepMs));
-    }
-
-    private function isQueueSyncFallbackEnabled(): bool
-    {
-        return (int)env('FLASH_SALE_QUEUE_SYNC_FALLBACK', 1) === 1;
     }
 
     private function publishQueueWithRetry(array $payload): bool

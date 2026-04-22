@@ -16,6 +16,13 @@ use think\facade\Log;
 final class FlashSaleOrderQueueService
 {
     /**
+     * 发布错误上下文（仅当前进程内有效）
+     *
+     * @var array<string, mixed>
+     */
+    private static array $lastPublishError = [];
+
+    /**
      * 声明秒杀下单队列
      */
     public static function declareQueue(AMQPChannel $channel, ?string $queueName = null): string
@@ -107,8 +114,13 @@ final class FlashSaleOrderQueueService
      */
     public static function publish(array $payload): bool
     {
+        self::$lastPublishError = [];
         $cfg = config('rabbitmq');
         if (!is_array($cfg)) {
+            self::$lastPublishError = [
+                'reason' => 'config_missing',
+                'message' => 'rabbitmq config missing',
+            ];
             return false;
         }
         $host = (string)($cfg['host'] ?? '127.0.0.1');
@@ -147,14 +159,80 @@ final class FlashSaleOrderQueueService
             $channel->wait_for_pending_acks(10.0);
             $channel->close();
             $connection->close();
+            self::$lastPublishError = [];
             return true;
         } catch (\Throwable $e) {
-            Log::warning('FlashSaleOrderQueueService publish failed', [
+            $queue = self::safeResolveQueueName($payload);
+            $errorReason = self::resolvePublishErrorReason($e);
+            self::$lastPublishError = [
+                'reason' => $errorReason,
                 'message' => $e->getMessage(),
-                'payload' => $payload,
+                'queue' => $queue,
+                'request_id' => (string)($payload['request_id'] ?? ''),
+                'activity_id' => (int)($payload['activity_id'] ?? 0),
+                'item_id' => (int)($payload['item_id'] ?? 0),
+            ];
+            $summary = sprintf(
+                'FlashSaleOrderQueueService publish failed | reason=%s queue=%s request_id=%s activity_id=%d item_id=%d message=%s',
+                $errorReason,
+                $queue,
+                (string)($payload['request_id'] ?? ''),
+                (int)($payload['activity_id'] ?? 0),
+                (int)($payload['item_id'] ?? 0),
+                $e->getMessage()
+            );
+            Log::warning($summary, [
+                'reason' => $errorReason,
+                'message' => $e->getMessage(),
+                'queue' => $queue,
+                'request_id' => (string)($payload['request_id'] ?? ''),
+                'activity_id' => (int)($payload['activity_id'] ?? 0),
+                'item_id' => (int)($payload['item_id'] ?? 0),
             ]);
             return false;
         }
+    }
+
+    /**
+     * 获取最近一次发布失败上下文
+     *
+     * @return array<string, mixed>
+     */
+    public static function getLastPublishError(): array
+    {
+        return self::$lastPublishError;
+    }
+
+    private static function safeResolveQueueName(array $payload): string
+    {
+        try {
+            return self::resolveQueueName($payload);
+        } catch (\Throwable $e) {
+        }
+        return '';
+    }
+
+    private static function resolvePublishErrorReason(\Throwable $e): string
+    {
+        $message = strtolower($e->getMessage());
+        if (str_contains($message, 'precondition_failed') || str_contains($message, 'inequivalent arg')) {
+            return 'queue_declare_mismatch';
+        }
+        if (str_contains($message, 'access_refused') || str_contains($message, 'not_allowed')) {
+            return 'auth_or_permission';
+        }
+        if (
+            str_contains($message, 'connection refused')
+            || str_contains($message, 'broken pipe')
+            || str_contains($message, 'connection reset')
+            || str_contains($message, 'server has gone away')
+        ) {
+            return 'connection_failed';
+        }
+        if (str_contains($message, 'timed out') || str_contains($message, 'wait_for_pending_acks')) {
+            return 'ack_timeout';
+        }
+        return 'unknown';
     }
 }
 
