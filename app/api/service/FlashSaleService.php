@@ -1100,6 +1100,9 @@ class FlashSaleService
         ];
     }
 
+    /**
+     * 统一返回“排队中”状态，供前端继续轮询结果接口。
+     */
     private function buildQueueingResponse(string $requestId): array
     {
         $state = $this->getRequestState($requestId);
@@ -1118,6 +1121,9 @@ class FlashSaleService
         ];
     }
 
+    /**
+     * 基于 request_state 组装幂等返回，避免重复请求重复下单。
+     */
     private function buildResponseByRequestState(array $state, string $requestId): array
     {
         $status = (int)($state['status'] ?? self::ORDER_STATUS_QUEUEING);
@@ -1143,6 +1149,9 @@ class FlashSaleService
         return $this->buildQueueingResponse($requestId);
     }
 
+    /**
+     * 读取 request_id 对应的短期状态缓存（兼容数组/JSON 两种存储格式）。
+     */
     private function getRequestState(string $requestId): array
     {
         if ($requestId === '') {
@@ -1162,6 +1171,9 @@ class FlashSaleService
         return [];
     }
 
+    /**
+     * 写入 request_id 状态缓存，供重试/轮询/幂等返回复用。
+     */
     private function setRequestState(string $requestId, array $state): void
     {
         if ($requestId === '') {
@@ -1174,11 +1186,17 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 构造普通订单防重键（同用户同商品仅允许一个待支付订单）。
+     */
     private function buildOrderPendingLockKey(int $userId, int $goodsType, int $goodsId): string
     {
         return 'u:' . $userId . '|g:' . $goodsType . ':' . $goodsId;
     }
 
+    /**
+     * 创建待支付订单并重试处理 order_sn 冲突。
+     */
     private function createPendingOrderWithRetry(
         int $userId,
         float $payAmount,
@@ -1208,21 +1226,33 @@ class FlashSaleService
         throw new ValidateException('订单创建失败，请稍后重试');
     }
 
+    /**
+     * 生成唯一订单号（用于普通订单主表）。
+     */
     private function generateUniqueOrderSn(): string
     {
         return 'ORD' . date('YmdHis') . strtoupper(bin2hex(random_bytes(4)));
     }
 
+    /**
+     * 判断是否命中“待支付防重键”唯一索引冲突。
+     */
     private function isPendingOrderDuplicateException(\Throwable $e): bool
     {
         return $this->isDuplicateForIndexes($e, ['uk_pending_lock_key', 'pending_lock_key']);
     }
 
+    /**
+     * 判断是否命中订单号唯一索引冲突。
+     */
     private function isOrderSnDuplicateException(\Throwable $e): bool
     {
         return $this->isDuplicateForIndexes($e, ['uk_order_sn', 'order_sn']);
     }
 
+    /**
+     * 通用重复键识别：结合 SQLSTATE/驱动码与索引名关键字判断。
+     */
     private function isDuplicateForIndexes(\Throwable $e, array $indexNames): bool
     {
         [$sqlState, $driverCode] = $this->extractSqlStateAndDriverCode($e);
@@ -1241,11 +1271,17 @@ class FlashSaleService
         return $matchedIndex;
     }
 
+    /**
+     * 生成分布式锁持有 token。
+     */
     private function createLockToken(): string
     {
         return bin2hex(random_bytes(16));
     }
 
+    /**
+     * 获取 request_id 级别互斥锁，避免同请求并发创建订单。
+     */
     private function acquireRequestLock(string $requestId): string
     {
         if ($requestId === '') {
@@ -1257,6 +1293,9 @@ class FlashSaleService
         );
     }
 
+    /**
+     * 释放 request_id 锁（仅锁持有者可删除）。
+     */
     private function releaseRequestLock(string $requestId, string $lockToken): void
     {
         if ($requestId === '' || $lockToken === '') {
@@ -1284,6 +1323,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * request_id 锁续期，供长事务/重试阶段保持锁有效。
+     */
     private function refreshRequestLock(string $requestId, string $lockToken): bool
     {
         if ($requestId === '' || $lockToken === '') {
@@ -1296,6 +1338,9 @@ class FlashSaleService
         );
     }
 
+    /**
+     * 回滚“已占库存”状态（数据库 locked_stock + Redis 可售库存）。
+     */
     private function rollbackQueuedReservation(int $itemId, int $userId, int $buyCount): void
     {
         if ($itemId > 0 && $buyCount > 0) {
@@ -1311,6 +1356,9 @@ class FlashSaleService
         $this->rollbackReservedStock($itemId, $userId, $buyCount);
     }
 
+    /**
+     * 校验活动和商品有效性、状态以及时间窗。
+     */
     private function assertActivityItemValid(int $activityId, int $itemId): void
     {
         $activity = Db::name('flash_sale_activity')->where('id', $activityId)->find();
@@ -1327,21 +1375,33 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 构造 token 在缓存中的主键（一次性令牌实体键）。
+     */
     private function buildTokenCacheKey(int $userId, int $activityId, int $itemId, string $token): string
     {
         return self::TOKEN_CACHE_PREFIX . $userId . ':' . $activityId . ':' . $itemId . ':' . $token;
     }
 
+    /**
+     * 构造 token 绑定关系缓存键（token -> user/activity/item）。
+     */
     private function buildTokenBindingCacheKey(string $token): string
     {
         return self::TOKEN_BINDING_PREFIX . $token;
     }
 
+    /**
+     * 构造 token 已消费标记缓存键（防止重复使用）。
+     */
     private function buildTokenConsumedCacheKey(string $token): string
     {
         return self::TOKEN_CONSUMED_PREFIX . $token;
     }
 
+    /**
+     * 记录 token 与请求参数绑定关系，便于识别串参/重放。
+     */
     private function writeTokenBinding(string $token, int $userId, int $activityId, int $itemId, int $ttlSeconds): void
     {
         if ($token === '') {
@@ -1361,6 +1421,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 若 token 绑定关系与当前请求不一致，返回可读错误文案。
+     */
     private function resolveTokenBindingMismatchMessage(string $token, int $userId, int $activityId, int $itemId): string
     {
         if ($token === '') {
@@ -1383,6 +1446,9 @@ class FlashSaleService
         return '';
     }
 
+    /**
+     * 标记 token 已消费并清理绑定信息。
+     */
     private function markTokenConsumed(string $token, int $ttlSeconds): void
     {
         if ($token === '') {
@@ -1395,6 +1461,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 原子消费 token（删除成功即视为消费成功）。
+     */
     private function consumeToken(string $cacheKey, string $token, int $ttlSeconds): bool
     {
         if ($cacheKey === '') {
@@ -1433,6 +1502,9 @@ class FlashSaleService
         return false;
     }
 
+    /**
+     * 适配 Redis 前缀配置，构造带前缀的真实 key。
+     */
     private function buildRedisPrefixedCacheKey(string $cacheKey): string
     {
         $prefix = (string)config('cache.stores.redis.prefix', '');
@@ -1442,6 +1514,9 @@ class FlashSaleService
         return $prefix . $cacheKey;
     }
 
+    /**
+     * token 消费短重试，降低极短暂并发冲突带来的失败率。
+     */
     private function consumeTokenWithRetry(
         string $cacheKey,
         string $token,
@@ -1496,6 +1571,9 @@ class FlashSaleService
         ];
     }
 
+    /**
+     * 计算会场按钮状态（未开始/已结束/售罄/立即抢购）。
+     */
     private function resolveButtonStatus(array $row, int $availableStock, string $now): string
     {
         $startTime = (string)($row['start_time'] ?? '');
@@ -1568,6 +1646,9 @@ class FlashSaleService
         return $filtered;
     }
 
+    /**
+     * 根据商品类型解析快照标题兜底名称。
+     */
     private function resolveGoodsName(int $goodsType, int $goodsId): string
     {
         if ($goodsType === 10) {
@@ -1579,6 +1660,9 @@ class FlashSaleService
         return '秒杀商品';
     }
 
+    /**
+     * 检查用户是否已完成购买（防止已购用户重复参与秒杀）。
+     */
     private function hasPurchasedConflict(int $userId, int $goodsType, int $goodsId): bool
     {
         if ($userId <= 0 || $goodsId <= 0 || !in_array($goodsType, [10, 20], true)) {
@@ -1596,6 +1680,9 @@ class FlashSaleService
         return $count > 0;
     }
 
+    /**
+     * 读取预留库存时长配置（秒）。
+     */
     private function getReserveSeconds(): int
     {
         $minutes = (int)env('FLASH_SALE_RESERVE_MINUTES', 5);
@@ -1603,36 +1690,54 @@ class FlashSaleService
         return $minutes * 60;
     }
 
+    /**
+     * 读取秒杀 token 有效期配置（秒）。
+     */
     private function getTokenTtlSeconds(): int
     {
         $ttl = (int)env('FLASH_SALE_TOKEN_TTL_SECONDS', self::TOKEN_TTL_SECONDS);
         return max(30, min(300, $ttl));
     }
 
+    /**
+     * 读取 token 消费重试次数配置。
+     */
     private function getTokenConsumeRetryTimes(): int
     {
         $times = (int)env('FLASH_SALE_TOKEN_CONSUME_RETRY_TIMES', self::TOKEN_CONSUME_RETRY_TIMES);
         return max(0, min(3, $times));
     }
 
+    /**
+     * 读取 token 消费重试间隔配置（毫秒）。
+     */
     private function getTokenConsumeRetrySleepMs(): int
     {
         $sleepMs = (int)env('FLASH_SALE_TOKEN_CONSUME_RETRY_SLEEP_MS', self::TOKEN_CONSUME_RETRY_SLEEP_MS);
         return max(5, min(100, $sleepMs));
     }
 
+    /**
+     * 读取队列发布重试次数配置。
+     */
     private function getQueuePublishRetryTimes(): int
     {
         $times = (int)env('FLASH_SALE_QUEUE_PUBLISH_RETRY_TIMES', self::QUEUE_PUBLISH_RETRY_TIMES);
         return max(0, min(5, $times));
     }
 
+    /**
+     * 读取队列发布重试间隔配置（毫秒）。
+     */
     private function getQueuePublishRetrySleepMs(): int
     {
         $sleepMs = (int)env('FLASH_SALE_QUEUE_PUBLISH_RETRY_SLEEP_MS', self::QUEUE_PUBLISH_RETRY_SLEEP_MS);
         return max(10, min(300, $sleepMs));
     }
 
+    /**
+     * 发布下单消息并按配置进行短重试。
+     */
     private function publishQueueWithRetry(array $payload): bool
     {
         if (FlashSaleOrderQueueService::publish($payload)) {
@@ -1649,6 +1754,9 @@ class FlashSaleService
         return false;
     }
 
+    /**
+     * 计算“距离库存预留过期”剩余秒数（支持 create_time 兜底）。
+     */
     private function calcExpireSeconds(string $reserveExpireTime, string $fallbackCreateTime = ''): int
     {
         $expireTs = $this->parseTimeToTs($reserveExpireTime);
@@ -1664,6 +1772,9 @@ class FlashSaleService
         return max(0, $expireTs - time());
     }
 
+    /**
+     * 检测 flash_sale_order 是否存在 reserve_expire_time 字段。
+     */
     private function hasReserveExpireField(): bool
     {
         if (self::$hasReserveExpireField !== null) {
@@ -1678,6 +1789,9 @@ class FlashSaleService
         return self::$hasReserveExpireField;
     }
 
+    /**
+     * 下单接口限频（用户/IP/设备三级窗口）。
+     */
     private function assertCreateRateLimit(int $userId, int $activityId, int $itemId, string $clientIp, string $deviceId): void
     {
         $scene = $activityId . ':' . $itemId;
@@ -1713,6 +1827,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 领 token 接口限频（用户/IP/设备三级窗口）。
+     */
     private function assertTokenRateLimit(int $userId, int $activityId, int $itemId, string $clientIp, string $deviceId): void
     {
         $scene = $activityId . ':' . $itemId;
@@ -1746,6 +1863,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 通用一分钟滑窗计数校验（超限抛错并记风控日志）。
+     */
     private function assertRateWindow(string $key, int $limit, string $errorMessage, string $reason, array $context = []): void
     {
         try {
@@ -1776,6 +1896,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 命中黑名单则阻断下单。
+     */
     private function assertCreateBlacklist(int $userId, int $activityId, int $itemId, string $clientIp, string $deviceId): void
     {
         $black = $this->findCreateBlacklistHit($userId, $clientIp, $deviceId);
@@ -1794,6 +1917,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 记录风控命中日志（带采样）。
+     */
     private function recordRiskEvent(string $reason, array $context = []): void
     {
         if (!$this->shouldRecordRiskEvent($reason, $context)) {
@@ -1826,6 +1952,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 统一 precheck 返回结构。
+     */
     private function buildPrecheckResult(bool $eligible, string $reasonCode, string $message, array $extra = []): array
     {
         return [
@@ -1837,6 +1966,9 @@ class FlashSaleService
         ];
     }
 
+    /**
+     * request_id 基础合法性校验（字符集、长度、熵）。
+     */
     private function isValidRequestId(string $requestId): bool
     {
         if ($requestId === '') {
@@ -1851,6 +1983,9 @@ class FlashSaleService
         return $this->hasSufficientRequestIdEntropy($requestId);
     }
 
+    /**
+     * request_id 熵校验（严格模式可配置）。
+     */
     private function hasSufficientRequestIdEntropy(string $requestId): bool
     {
         $strict = (int)env('FLASH_SALE_REQUEST_ID_STRICT', 1) === 1;
@@ -1880,6 +2015,9 @@ class FlashSaleService
         return count(array_unique(str_split($requestId))) >= 6;
     }
 
+    /**
+     * request_id 时效校验，防止旧请求长时间重放。
+     */
     private function assertRequestIdWindow(string $requestId): void
     {
         $maxAge = max(60, min(86400, (int)env('FLASH_SALE_REQUEST_ID_MAX_AGE_SECONDS', 1800)));
@@ -1923,21 +2061,33 @@ class FlashSaleService
         }
     }
 
+    /**
+     * token 格式校验（32位 hex）。
+     */
     private function isValidToken(string $token): bool
     {
         return preg_match('/^[a-fA-F0-9]{32}$/', $token) === 1;
     }
 
+    /**
+     * 规范化客户端 IP，限制最大长度。
+     */
     private function normalizeClientIp(string $clientIp): string
     {
         return substr(trim($clientIp), 0, self::MAX_CLIENT_IP_LENGTH);
     }
 
+    /**
+     * 规范化设备标识，限制最大长度。
+     */
     private function normalizeDeviceId(string $deviceId): string
     {
         return substr(trim($deviceId), 0, self::MAX_DEVICE_ID_LENGTH);
     }
 
+    /**
+     * 判断当前风控事件是否需要落库（支持采样）。
+     */
     private function shouldRecordRiskEvent(string $reason, array $context = []): bool
     {
         $reason = trim($reason);
@@ -1965,6 +2115,11 @@ class FlashSaleService
         return $bucket < $samplePercent;
     }
 
+    /**
+     * 查询下单黑名单命中项（user/ip/device）。
+     *
+     * @return array<string, mixed>
+     */
     private function findCreateBlacklistHit(int $userId, string $clientIp, string $deviceId): array
     {
         $targets = [
@@ -1997,6 +2152,11 @@ class FlashSaleService
         return [];
     }
 
+    /**
+     * 仅做限频预览检查（不计数），用于 precheck 返回友好提示。
+     *
+     * @return array<string, mixed>
+     */
     private function checkCreateRateLimitPreview(int $userId, int $activityId, int $itemId, string $clientIp, string $deviceId): array
     {
         $scene = $activityId . ':' . $itemId;
@@ -2039,6 +2199,9 @@ class FlashSaleService
         return [];
     }
 
+    /**
+     * 将订单过期时间写入 Redis 延迟释放队列（zset）。
+     */
     private function scheduleReserveRelease(int $orderId, string $reserveExpireTime): void
     {
         $orderId = (int)$orderId;
@@ -2058,6 +2221,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 从 Redis 延迟释放队列移除订单。
+     */
     private function removeReserveReleaseSchedule(int $orderId): void
     {
         $orderId = (int)$orderId;
@@ -2073,6 +2239,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 在 Redis 原子预占库存，并标记用户待支付占位。
+     */
     private function reserveStockWithRedis(int $itemId, int $userId, int $buyCount, int $fallbackStock): bool
     {
         $redis = $this->getRedisHandler();
@@ -2116,6 +2285,9 @@ class FlashSaleService
         return false;
     }
 
+    /**
+     * 回滚 Redis 预占库存并清理 pending 标记。
+     */
     private function rollbackReservedStock(int $itemId, int $userId, int $buyCount): void
     {
         $redis = $this->getRedisHandler();
@@ -2135,6 +2307,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 处理“超时后晚到支付”场景：扣回之前回补的可售库存。
+     */
     private function consumeReservedStockAfterLatePaid(int $itemId, int $buyCount): void
     {
         if ($itemId <= 0 || $buyCount <= 0) {
@@ -2155,6 +2330,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 清理用户在某商品下的 Redis 待支付占位状态。
+     */
     private function clearPendingByUser(int $itemId, int $userId): void
     {
         $redis = $this->getRedisHandler();
@@ -2167,26 +2345,41 @@ class FlashSaleService
         $this->clearUserItemPendingMarker($itemId, $userId);
     }
 
+    /**
+     * 商品可售库存缓存键。
+     */
     private function getStockCacheKey(int $itemId): string
     {
         return self::STOCK_KEY_PREFIX . $itemId;
     }
 
+    /**
+     * 用户-商品待支付占位缓存键。
+     */
     private function getPendingCacheKey(int $itemId, int $userId): string
     {
         return self::PENDING_KEY_PREFIX . $itemId . ':' . $userId;
     }
 
+    /**
+     * 用户-活动-商品互斥锁 key。
+     */
     private function buildUserItemLockKey(int $activityId, int $itemId, int $userId): string
     {
         return self::USER_ITEM_LOCK_PREFIX . $activityId . ':' . $itemId . ':' . $userId;
     }
 
+    /**
+     * 用户-商品待处理标记 key（防并发风暴）。
+     */
     private function buildUserItemPendingKey(int $itemId, int $userId): string
     {
         return self::USER_ITEM_PENDING_PREFIX . $itemId . ':' . $userId;
     }
 
+    /**
+     * 获取用户-商品粒度互斥锁。
+     */
     private function acquireUserItemLock(int $activityId, int $itemId, int $userId): string
     {
         return $this->acquireOwnedLock(
@@ -2195,6 +2388,9 @@ class FlashSaleService
         );
     }
 
+    /**
+     * 释放用户-商品粒度互斥锁。
+     */
     private function releaseUserItemLock(int $activityId, int $itemId, int $userId, string $lockToken): void
     {
         if ($lockToken === '') {
@@ -2222,6 +2418,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 用户-商品锁续期。
+     */
     private function refreshUserItemLock(int $activityId, int $itemId, int $userId, string $lockToken): bool
     {
         if ($lockToken === '') {
@@ -2234,6 +2433,9 @@ class FlashSaleService
         );
     }
 
+    /**
+     * 通用“持有者锁续期”实现（仅 token 匹配才续期）。
+     */
     private function refreshOwnedLock(string $lockKey, string $lockToken, int $ttlSeconds): bool
     {
         if ($lockKey === '' || $lockToken === '' || $ttlSeconds <= 0) {
@@ -2262,6 +2464,9 @@ class FlashSaleService
         return false;
     }
 
+    /**
+     * 通用“持有者锁获取”实现（NX + EX）。
+     */
     private function acquireOwnedLock(string $lockKey, int $ttlSeconds): string
     {
         if ($lockKey === '' || $ttlSeconds <= 0) {
@@ -2291,18 +2496,27 @@ class FlashSaleService
         return '';
     }
 
+    /**
+     * request_id 锁 TTL 配置读取。
+     */
     private function getRequestLockTtlSeconds(): int
     {
         $ttl = (int)env('FLASH_SALE_REQUEST_LOCK_TTL_SECONDS', self::REQUEST_LOCK_TTL_SECONDS);
         return max(30, min(300, $ttl));
     }
 
+    /**
+     * 用户-商品锁 TTL 配置读取。
+     */
     private function getUserItemLockTtlSeconds(): int
     {
         $ttl = (int)env('FLASH_SALE_USER_ITEM_LOCK_TTL_SECONDS', self::USER_ITEM_LOCK_TTL_SECONDS);
         return max(20, min(180, $ttl));
     }
 
+    /**
+     * 标记“用户在该商品下已有处理中请求”，抑制并发重入。
+     */
     private function setUserItemPendingMarker(int $itemId, int $userId, int $ttlSeconds): void
     {
         $pendingKey = $this->buildUserItemPendingKey($itemId, $userId);
@@ -2312,6 +2526,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 清理用户-商品处理中标记。
+     */
     private function clearUserItemPendingMarker(int $itemId, int $userId): void
     {
         $pendingKey = $this->buildUserItemPendingKey($itemId, $userId);
@@ -2321,6 +2538,9 @@ class FlashSaleService
         }
     }
 
+    /**
+     * 判断用户-商品处理中标记是否存在。
+     */
     private function hasUserItemPendingMarker(int $itemId, int $userId): bool
     {
         $pendingKey = $this->buildUserItemPendingKey($itemId, $userId);
@@ -2331,6 +2551,9 @@ class FlashSaleService
         return false;
     }
 
+    /**
+     * Redis Lua：校验库存与 pending 后原子预扣库存并写 pending。
+     */
     private function getReserveStockLuaScript(): string
     {
         return <<<'LUA'
@@ -2353,6 +2576,9 @@ return 1
 LUA;
     }
 
+    /**
+     * 若订单已过期则释放库存并改写状态。
+     */
     private function releaseOrderIfExpired(int $orderId, int $nowTs): bool
     {
         if ($orderId <= 0) {
@@ -2400,6 +2626,9 @@ LUA;
         });
     }
 
+    /**
+     * 计算订单预留过期时间戳（字段缺失时回退 create_time+reserveSeconds）。
+     */
     private function getOrderReserveExpireTs(array $flashSaleOrder): int
     {
         if ($this->hasReserveExpireField()) {
@@ -2412,6 +2641,9 @@ LUA;
         return $createTs > 0 ? $createTs + $this->getReserveSeconds() : time();
     }
 
+    /**
+     * 将时间字符串安全转换为时间戳。
+     */
     private function parseTimeToTs(string $value): int
     {
         $value = trim($value);
@@ -2422,6 +2654,9 @@ LUA;
         return $ts === false ? 0 : (int)$ts;
     }
 
+    /**
+     * 获取 Redis 句柄（可用时返回底层客户端）。
+     */
     private function getRedisHandler()
     {
         try {
@@ -2434,6 +2669,9 @@ LUA;
         return null;
     }
 
+    /**
+     * 删除缓存键，兼容底层 Redis 与 ThinkPHP Cache 门面。
+     */
     private function deleteCacheKey(string $key, $redis = null): bool
     {
         if ($key === '') {
@@ -2484,6 +2722,9 @@ LUA;
         throw new ValidateException('数据库锁冲突，请稍后重试');
     }
 
+    /**
+     * 识别异常是否属于死锁/锁等待超时可重试场景。
+     */
     private function isDeadlockException(\Throwable $e): bool
     {
         [$sqlState, $driverCode] = $this->extractSqlStateAndDriverCode($e);

@@ -200,6 +200,9 @@ class DistributionService
         return $code;
     }
 
+    /**
+     * 生成推广注册链接；未配置站点域名时返回站内相对地址。
+     */
     private function buildPromotionUrl(string $code): string
     {
         $base = rtrim((string)config('app.distribution_register_url', ''), '/');

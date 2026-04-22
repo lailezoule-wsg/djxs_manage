@@ -48,9 +48,6 @@ final class FlashSaleOrderQueueService
     }
 
     /**
-     * @return array<int, string>
-     */
-    /**
      * 解析消费端应监听的队列列表
      *
      * @return array<int, string>
@@ -203,6 +200,9 @@ final class FlashSaleOrderQueueService
         return self::$lastPublishError;
     }
 
+    /**
+     * 安全解析发布目标队列名（异常时返回空字符串）。
+     */
     private static function safeResolveQueueName(array $payload): string
     {
         try {
@@ -212,6 +212,9 @@ final class FlashSaleOrderQueueService
         return '';
     }
 
+    /**
+     * 归类 RabbitMQ 发布异常原因，便于上层做重试/告警分流。
+     */
     private static function resolvePublishErrorReason(\Throwable $e): string
     {
         $message = strtolower($e->getMessage());

@@ -219,6 +219,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $newIds;
     }
 
+    /**
+     * 分页查询活动下商品列表。
+     */
     public function itemList(int $activityId, int $page, int $pageSize): array
     {
         if ($activityId <= 0) {
@@ -230,6 +233,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $this->paginateToArray($query, $page, $pageSize);
     }
 
+    /**
+     * 创建活动商品。
+     */
     public function itemCreate(array $payload): int
     {
         $data = $this->normalizeItem($payload, false);
@@ -242,6 +248,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $id;
     }
 
+    /**
+     * 更新活动商品。
+     */
     public function itemUpdate(int $id, array $payload): void
     {
         $item = Db::name('flash_sale_item')->where('id', $id)->find();
@@ -258,6 +267,9 @@ class FlashSaleAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 删除活动商品。
+     */
     public function itemDelete(int $id): void
     {
         $item = Db::name('flash_sale_item')->where('id', $id)->find();
@@ -271,6 +283,9 @@ class FlashSaleAdminService extends BaseAdminService
         ]);
     }
 
+    /**
+     * 分页查询秒杀订单（支持活动/用户/状态/时间区间筛选）。
+     */
     public function orderList(array $params, int $page, int $pageSize): array
     {
         $query = Db::name('flash_sale_order')->alias('f')
@@ -339,6 +354,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $this->paginateToArray($query, $page, $pageSize);
     }
 
+    /**
+     * 创建异步导出任务（先初始化任务元数据与 CSV 头）。
+     */
     public function createOrderExportTask(array $params, int $adminId): array
     {
         if ($adminId <= 0) {
@@ -370,6 +388,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $task;
     }
 
+    /**
+     * 获取导出任务状态（按 chunk 推进任务）。
+     */
     public function getOrderExportTaskStatus(string $taskId, int $adminId): array
     {
         $this->cleanupOldExportFiles();
@@ -381,6 +402,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $this->formatExportTaskStatus($task);
     }
 
+    /**
+     * 重试失败导出任务。
+     */
     public function retryOrderExportTask(string $taskId, int $adminId): array
     {
         $this->cleanupOldExportFiles();
@@ -397,6 +421,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $this->processExportTaskChunk($taskId, $task);
     }
 
+    /**
+     * 分页查询当前管理员的导出任务列表。
+     */
     public function listOrderExportTasks(array $params, int $adminId, int $page, int $pageSize): array
     {
         if ($adminId <= 0) {
@@ -465,6 +492,9 @@ class FlashSaleAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 删除已结束导出任务及对应 CSV 文件。
+     */
     public function deleteOrderExportTask(string $taskId, int $adminId): void
     {
         $task = $this->loadExportTask($taskId);
@@ -483,6 +513,9 @@ class FlashSaleAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 活动统计概览（GMV、支付率、售罄数、峰值与趋势）。
+     */
     public function statistics(int $activityId, array $params = []): array
     {
         if ($activityId <= 0) {
@@ -558,6 +591,9 @@ class FlashSaleAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 分页查询风控命中日志。
+     */
     public function riskLogList(array $params, int $page, int $pageSize): array
     {
         if (!$this->tableExists('flash_sale_risk_log')) {
@@ -613,6 +649,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $this->paginateToArray($query, $page, $pageSize);
     }
 
+    /**
+     * 风控汇总看板（原因、Top IP/设备/用户、趋势）。
+     */
     public function riskSummary(array $params = []): array
     {
         if (!$this->tableExists('flash_sale_risk_log')) {
@@ -740,6 +779,9 @@ class FlashSaleAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 活动健康分历史趋势（按分钟/小时/天聚合）。
+     */
     public function riskHealthHistory(array $params = []): array
     {
         if (!$this->tableExists('flash_sale_risk_log')) {
@@ -841,6 +883,9 @@ class FlashSaleAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 获取风控健康分阈值（全局/活动覆盖）。
+     */
     public function riskHealthThresholdGet(array $params = []): array
     {
         $activityId = (int)($params['activity_id'] ?? 0);
@@ -854,6 +899,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $thresholds;
     }
 
+    /**
+     * 更新风控健康分阈值，支持活动级覆盖与恢复全局。
+     */
     public function riskHealthThresholdUpdate(array $payload): array
     {
         $activityId = (int)($payload['activity_id'] ?? 0);
@@ -901,6 +949,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $thresholds;
     }
 
+    /**
+     * 分页查询风控黑名单。
+     */
     public function blacklistList(array $params, int $page, int $pageSize): array
     {
         if (!$this->tableExists('flash_sale_risk_blacklist')) {
@@ -932,11 +983,17 @@ class FlashSaleAdminService extends BaseAdminService
         return $this->paginateToArray($query, $page, $pageSize);
     }
 
+    /**
+     * 手动触发风控日志历史清理。
+     */
     public function cleanupRiskLogs(): int
     {
         return $this->cleanupOldRiskLogs();
     }
 
+    /**
+     * 创建黑名单记录。
+     */
     public function blacklistCreate(array $payload, int $adminId): int
     {
         if (!$this->tableExists('flash_sale_risk_blacklist')) {
@@ -951,6 +1008,9 @@ class FlashSaleAdminService extends BaseAdminService
         return (int)Db::name('flash_sale_risk_blacklist')->insertGetId($data);
     }
 
+    /**
+     * 更新黑名单记录。
+     */
     public function blacklistUpdate(int $id, array $payload, int $adminId): void
     {
         if (!$this->tableExists('flash_sale_risk_blacklist')) {
@@ -968,6 +1028,9 @@ class FlashSaleAdminService extends BaseAdminService
         Db::name('flash_sale_risk_blacklist')->where('id', $id)->update($data);
     }
 
+    /**
+     * 软删除黑名单（置 status=0）。
+     */
     public function blacklistDelete(int $id, int $adminId): void
     {
         if (!$this->tableExists('flash_sale_risk_blacklist')) {
@@ -984,6 +1047,9 @@ class FlashSaleAdminService extends BaseAdminService
         ]);
     }
 
+    /**
+     * 规范化订单筛选参数（导出与列表复用）。
+     */
     private function normalizeOrderFilterParams(array $params): array
     {
         $normalized = [
@@ -1016,6 +1082,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $normalized;
     }
 
+    /**
+     * 检测指定表是否包含某字段（兼容灰度结构）。
+     */
     private function tableHasColumn(string $table, string $column): bool
     {
         try {
@@ -1026,6 +1095,9 @@ class FlashSaleAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 确保导出任务目录与公开 CSV 目录存在。
+     */
     private function ensureExportTaskDirectory(): void
     {
         $taskDir = $this->getExportTaskDirPath();
@@ -1038,16 +1110,25 @@ class FlashSaleAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 导出任务元数据目录（runtime 下）。
+     */
     private function getExportTaskDirPath(): string
     {
         return rtrim(app()->getRuntimePath(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . self::EXPORT_TASK_DIR;
     }
 
+    /**
+     * 导出任务元数据文件路径（JSON）。
+     */
     private function getExportTaskFilePath(string $taskId): string
     {
         return $this->getExportTaskDirPath() . DIRECTORY_SEPARATOR . $taskId . '.json';
     }
 
+    /**
+     * 导出 CSV 绝对路径。
+     */
     private function getExportCsvPath(string $taskId): string
     {
         return rtrim(app()->getRootPath(), DIRECTORY_SEPARATOR)
@@ -1058,6 +1139,9 @@ class FlashSaleAdminService extends BaseAdminService
             . DIRECTORY_SEPARATOR . 'orders-' . $taskId . '.csv';
     }
 
+    /**
+     * 导出 CSV 所在目录绝对路径。
+     */
     private function getExportCsvDirPath(): string
     {
         return rtrim(app()->getRootPath(), DIRECTORY_SEPARATOR)
@@ -1065,6 +1149,9 @@ class FlashSaleAdminService extends BaseAdminService
             . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, self::EXPORT_CSV_RELATIVE_DIR);
     }
 
+    /**
+     * 清理超过保留期的导出任务文件与 CSV 文件。
+     */
     private function cleanupOldExportFiles(): void
     {
         $retentionDays = (int)config('app.flash_sale_export_retention_days', 7);
@@ -1121,6 +1208,9 @@ class FlashSaleAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 清理超过保留期的风控日志。
+     */
     private function cleanupOldRiskLogs(): int
     {
         if (!$this->tableExists('flash_sale_risk_log')) {
@@ -1136,6 +1226,9 @@ class FlashSaleAdminService extends BaseAdminService
             ->delete();
     }
 
+    /**
+     * 为活动列表补充交易指标（商品数、销量、GMV）。
+     */
     private function appendActivityTradeMetrics(array $activities): array
     {
         if (empty($activities)) {
@@ -1186,6 +1279,9 @@ class FlashSaleAdminService extends BaseAdminService
         }, $activities);
     }
 
+    /**
+     * 检测表是否存在（带进程内缓存）。
+     */
     private function tableExists(string $table): bool
     {
         if (isset(self::$tableExistsCache[$table])) {
@@ -1200,6 +1296,9 @@ class FlashSaleAdminService extends BaseAdminService
         return self::$tableExistsCache[$table];
     }
 
+    /**
+     * 写入 CSV 表头并添加 UTF-8 BOM。
+     */
     private function writeExportCsvHeader(string $taskId): void
     {
         $csvPath = $this->getExportCsvPath($taskId);
@@ -1216,6 +1315,9 @@ class FlashSaleAdminService extends BaseAdminService
         fclose($fp);
     }
 
+    /**
+     * 追加一批导出数据行。
+     */
     private function appendExportRows(string $taskId, array $rows): void
     {
         if (empty($rows)) {
@@ -1243,6 +1345,9 @@ class FlashSaleAdminService extends BaseAdminService
         fclose($fp);
     }
 
+    /**
+     * 秒杀订单状态文案映射。
+     */
     private function flashOrderStatusText(int $status): string
     {
         return [
@@ -1253,6 +1358,9 @@ class FlashSaleAdminService extends BaseAdminService
         ][$status] ?? '-';
     }
 
+    /**
+     * 普通订单状态文案映射。
+     */
     private function orderStatusText(int $status): string
     {
         return [
@@ -1263,6 +1371,9 @@ class FlashSaleAdminService extends BaseAdminService
         ][$status] ?? '-';
     }
 
+    /**
+     * 读取导出任务元数据。
+     */
     private function loadExportTask(string $taskId): array
     {
         $file = $this->getExportTaskFilePath($taskId);
@@ -1277,12 +1388,18 @@ class FlashSaleAdminService extends BaseAdminService
         return $task;
     }
 
+    /**
+     * 持久化导出任务元数据。
+     */
     private function saveExportTask(string $taskId, array $task): void
     {
         $file = $this->getExportTaskFilePath($taskId);
         file_put_contents($file, json_encode($task, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 
+    /**
+     * 校验导出任务所属管理员。
+     */
     private function assertExportTaskOwner(array $task, int $adminId): void
     {
         if ((int)($task['admin_id'] ?? 0) !== $adminId) {
@@ -1290,6 +1407,9 @@ class FlashSaleAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 处理一段导出任务（单页查询 + 追加 CSV + 状态推进）。
+     */
     private function processExportTaskChunk(string $taskId, array $task): array
     {
         $task['status'] = 'running';
@@ -1328,6 +1448,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $task;
     }
 
+    /**
+     * 格式化导出任务状态响应（含进度）。
+     */
     private function formatExportTaskStatus(array $task): array
     {
         $total = (int)($task['total'] ?? 0);
@@ -1352,6 +1475,9 @@ class FlashSaleAdminService extends BaseAdminService
         ];
     }
 
+    /**
+     * 为活动列表补充风控健康指标。
+     */
     private function appendActivityRiskMetrics(array $activities, int $minutes): array
     {
         if (empty($activities)) {
@@ -1420,6 +1546,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $activities;
     }
 
+    /**
+     * 计算活动风控健康分（0-100）。
+     */
     private function calcActivityRiskHealth(int $riskCount, int $orderCount, int $topActorCount): int
     {
         if ($riskCount <= 0) {
@@ -1434,6 +1563,9 @@ class FlashSaleAdminService extends BaseAdminService
         return max(0, min(100, $health));
     }
 
+    /**
+     * 根据健康分映射风险级别（safe/attention/warning/critical）。
+     */
     private function resolveRiskLevel(int $health, int $activityId = 0): string
     {
         $thresholds = $this->getRiskThresholds($activityId);
@@ -1449,6 +1581,9 @@ class FlashSaleAdminService extends BaseAdminService
         return 'critical';
     }
 
+    /**
+     * 读取风险阈值（活动覆盖优先，否则回退全局）。
+     */
     private function getRiskThresholds(int $activityId = 0): array
     {
         $cacheKey = (string)$activityId;
@@ -1506,6 +1641,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $result;
     }
 
+    /**
+     * 判断活动是否配置了独立阈值覆盖。
+     */
     private function hasActivityRiskThresholdOverride(int $activityId): bool
     {
         if ($activityId <= 0 || !$this->tableExists('system_config')) {
@@ -1520,6 +1658,9 @@ class FlashSaleAdminService extends BaseAdminService
         return (int)$count > 0;
     }
 
+    /**
+     * 批量写入 system_config 键值。
+     */
     private function saveSystemConfigValues(array $dict): void
     {
         if (!$this->tableExists('system_config')) {
@@ -1544,6 +1685,9 @@ class FlashSaleAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 批量删除 system_config 键。
+     */
     private function deleteSystemConfigKeys(array $keys): void
     {
         if (!$this->tableExists('system_config')) {
@@ -1560,6 +1704,9 @@ class FlashSaleAdminService extends BaseAdminService
         Db::name('system_config')->whereIn('key', $cleanKeys)->delete();
     }
 
+    /**
+     * 发布秒杀实时事件（失败不影响主链路）。
+     */
     private function publishRealtimeEvent(string $event, array $payload = []): void
     {
         try {
@@ -1569,6 +1716,9 @@ class FlashSaleAdminService extends BaseAdminService
         }
     }
 
+    /**
+     * 规范化活动入参并做字段级校验。
+     */
     private function normalizeActivity(array $payload, bool $isUpdate): array
     {
         $name = trim((string)($payload['name'] ?? ''));
@@ -1619,6 +1769,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $data;
     }
 
+    /**
+     * 规范化黑名单入参并做字段级校验。
+     */
     private function normalizeBlacklist(array $payload, bool $isUpdate): array
     {
         $scene = trim((string)($payload['scene'] ?? 'create_order'));
@@ -1675,6 +1828,9 @@ class FlashSaleAdminService extends BaseAdminService
         return $data;
     }
 
+    /**
+     * 规范化活动商品入参并做字段级校验。
+     */
     private function normalizeItem(array $payload, bool $isUpdate): array
     {
         $activityId = (int)($payload['activity_id'] ?? 0);

@@ -463,6 +463,9 @@ class OrderService
         return $result;
     }
 
+    /**
+     * 为订单响应附加秒杀预留库存元信息（兼容老表无 reserve_expire_time 字段）。
+     */
     private function appendFlashSaleReserveMeta(array $order): array
     {
         $orderId = (int)($order['id'] ?? 0);
@@ -495,6 +498,9 @@ class OrderService
         return $order;
     }
 
+    /**
+     * 构造统一订单响应行（商品展示名、支付方式文本、秒杀元信息）。
+     */
     private function buildOrderResponseRow(array $order): array
     {
         $orderId = (int)($order['id'] ?? 0);
@@ -505,6 +511,9 @@ class OrderService
         return $this->appendFlashSaleReserveMeta($order);
     }
 
+    /**
+     * 检测 flash_sale_order 表是否存在 reserve_expire_time 字段。
+     */
     private function hasFlashReserveExpireField(): bool
     {
         if (self::$hasFlashReserveExpireField !== null) {
@@ -519,6 +528,9 @@ class OrderService
         return self::$hasFlashReserveExpireField;
     }
 
+    /**
+     * 检测 order 表是否存在 update_time 字段（兼容历史表结构）。
+     */
     private function hasOrderUpdateTimeField(): bool
     {
         if (self::$hasOrderUpdateTimeField !== null) {
@@ -533,6 +545,9 @@ class OrderService
         return self::$hasOrderUpdateTimeField;
     }
 
+    /**
+     * 统一订单更新载荷：离开待支付态时清理 pending_lock_key，并补 update_time。
+     */
     private function buildOrderUpdateData(array $data): array
     {
         if (array_key_exists('status', $data) && (int)$data['status'] !== 0) {
@@ -545,6 +560,9 @@ class OrderService
         return $data;
     }
 
+    /**
+     * 按主键更新单个订单（带字段兼容处理）。
+     */
     private function updateOrderById(int $orderId, array $data): int
     {
         if ($orderId <= 0) {
@@ -555,6 +573,9 @@ class OrderService
             ->update($this->buildOrderUpdateData($data));
     }
 
+    /**
+     * 批量更新订单（带字段兼容处理）。
+     */
     private function updateOrdersByIds(array $orderIds, array $data): int
     {
         $orderIds = array_values(array_filter(array_map('intval', $orderIds), static fn(int $id): bool => $id > 0));
@@ -601,6 +622,9 @@ class OrderService
     /**
      * 获取订单商品名称
      */
+    /**
+     * 读取订单商品名称（支付标题兜底）。
+     */
     private function getOrderGoodsName($orderId)
     {
         $goods = \app\api\model\OrderGoods::where('order_id', $orderId)->find();
@@ -639,6 +663,9 @@ class OrderService
     /**
      * 生成支付宝支付链接
      */
+    /**
+     * 构造支付宝支付跳转链接。
+     */
     private function getAlipayUrl($orderSn, $amount, $subject)
     {
         try {
@@ -650,6 +677,9 @@ class OrderService
 
     /**
      * 生成微信支付链接
+     */
+    /**
+     * 构造微信支付跳转链接（演示实现）。
      */
     private function getWechatPayUrl($orderSn, $amount, $subject)
     {
@@ -1136,6 +1166,9 @@ class OrderService
         ]);
     }
 
+    /**
+     * 读取分销佣金比例（百分比，来自 system_config.distribution_config）。
+     */
     private function getDistributionRatePercent(): float
     {
         $row = Db::name('system_config')->whereRaw('`key` = ?', ['distribution_config'])->find();
@@ -1150,6 +1183,9 @@ class OrderService
         return $rate > 0 ? $rate : 0.0;
     }
 
+    /**
+     * 确保用户存在分销档案；不存在则初始化一条。
+     */
     private function ensureDistributionRow(int $userId, int $parentUserId = 0): void
     {
         if ($userId <= 0) {
@@ -1171,6 +1207,9 @@ class OrderService
         ]);
     }
 
+    /**
+     * 生成唯一分销推广码。
+     */
     private function generateDistributionCode(): string
     {
         $chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -1232,12 +1271,18 @@ class OrderService
         return $notifySellerId === $expectedSellerId;
     }
 
+    /**
+     * 获取支付回调防重放缓存 TTL（秒）。
+     */
     private function getNotifyReplayTtlSeconds(): int
     {
         $ttl = (int)env('PAY_NOTIFY_REPLAY_TTL_SECONDS', 86400);
         return max(60, $ttl);
     }
 
+    /**
+     * 基于回调核心字段构造防重放缓存 key。
+     */
     private function buildNotifyReplayKey(array $data, string $orderSn, string $status, float $amount): string
     {
         $core = [
@@ -1252,16 +1297,25 @@ class OrderService
         return self::PAY_NOTIFY_REPLAY_CACHE_PREFIX . sha1(json_encode($core, JSON_UNESCAPED_UNICODE));
     }
 
+    /**
+     * 判断回调是否已处理过（防重放）。
+     */
     private function isNotifyReplay(string $key): bool
     {
         return Cache::has($key);
     }
 
+    /**
+     * 标记回调已处理（防重放）。
+     */
     private function markNotifyReplay(string $key): void
     {
         Cache::set($key, 1, $this->getNotifyReplayTtlSeconds());
     }
 
+    /**
+     * 校验回调时间戳是否在允许窗口内，兼容秒/毫秒时间戳与日期字符串。
+     */
     private function checkNotifyTimestamp(array $data, $timestampRaw = null, bool $requireTimestamp = false): bool
     {
         $window = (int)env('PAY_NOTIFY_TIMESTAMP_WINDOW_SECONDS', 1800);
@@ -1308,11 +1362,17 @@ class OrderService
         return abs(time() - $ts) <= $window;
     }
 
+    /**
+     * 是否开启支付回调严格模式（必须 timestamp/nonce/sign）。
+     */
     private function isNotifyStrictModeEnabled(): bool
     {
         return $this->getEnvBool('PAY_NOTIFY_STRICT_MODE', false);
     }
 
+    /**
+     * 严格模式下校验回调必填字段完整性。
+     */
     private function hasRequiredNotifyFields($timestampRaw, string $nonce, string $sign): bool
     {
         $timestamp = trim((string)$timestampRaw);
@@ -1327,6 +1387,9 @@ class OrderService
         return true;
     }
 
+    /**
+     * 读取布尔环境变量（兼容 1/true/yes/on）。
+     */
     private function getEnvBool(string $key, bool $default = false): bool
     {
         $value = env($key, $default ? '1' : '0');
@@ -1337,6 +1400,9 @@ class OrderService
         return in_array($normalized, ['1', 'true', 'yes', 'on'], true);
     }
 
+    /**
+     * 校验支付回调来源 IP 是否命中白名单规则。
+     */
     private function checkNotifyClientIp(string $clientIp): bool
     {
         $raw = env('PAY_NOTIFY_TRUSTED_IPS', '');
@@ -1356,6 +1422,9 @@ class OrderService
         return false;
     }
 
+    /**
+     * 判断 IP 是否匹配单 IP/CIDR/* 规则。
+     */
     private function ipMatchesRule(string $ip, string $rule): bool
     {
         if ($rule === '*') {
