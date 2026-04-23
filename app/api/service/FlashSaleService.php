@@ -241,6 +241,13 @@ class FlashSaleService
         if ($activityId <= 0 || $itemId <= 0) {
             throw new ValidateException('参数不完整');
         }
+        // 高并发下优先用 Redis 可售快照做快速失败，减少售罄阶段 DB 热点查询。
+        $stockSnapshot = $this->getRedisAvailableStockSnapshot($itemId);
+        if ($stockSnapshot !== null && $stockSnapshot < $buyCount) {
+            return $this->buildPrecheckResult(false, 'sold_out', '库存不足', [
+                'available_stock' => $stockSnapshot,
+            ]);
+        }
         $activity = Db::name('flash_sale_activity')->where('id', $activityId)->find();
         $item = Db::name('flash_sale_item')->where('id', $itemId)->find();
         if (!$activity || !$item || (int)$item['activity_id'] !== $activityId) {
@@ -454,6 +461,12 @@ class FlashSaleService
             ]);
             throw new ValidateException($bindingMismatchMessage);
         }
+        // 前移 pending 标记检查，避免在明显冲突场景浪费 token 消费。
+        if ($this->hasUserItemPendingMarker($itemId, $userId)) {
+            $releaseCreateLocks();
+            $this->recordCreateOrderFailureReason('pending_marker_conflict', $requestId, $userId, $activityId, $itemId, self::MSG_PENDING_ORDER_EXISTS);
+            throw new ValidateException(self::MSG_PENDING_ORDER_EXISTS);
+        }
         // 计算 token 缓存键并按配置执行消费（带短重试）。
         $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
         $tokenTtlSeconds = $this->getTokenTtlSeconds();
@@ -479,7 +492,7 @@ class FlashSaleService
             $this->recordTokenConsumeFailure($requestId, $userId, $activityId, $itemId, $token, $cacheKey, (array)$tokenFailure);
             throw new ValidateException((string)$tokenFailure['message']);
         }
-        // 二次检查用户商品待处理标记，拦截重复待支付单。
+        // 二次检查 pending 标记，兜底拦截“检查后又并发写入标记”的窗口。
         if ($this->hasUserItemPendingMarker($itemId, $userId)) {
             $releaseCreateLocks();
             $this->recordCreateOrderFailureReason('pending_marker_conflict', $requestId, $userId, $activityId, $itemId, self::MSG_PENDING_ORDER_EXISTS);
@@ -657,26 +670,24 @@ class FlashSaleService
         try {
             $this->executeWithDeadlockRetry(function () use ($payload, $requestId, $userId, $activityId, $itemId, $buyCount, $reserveExpireTime) {
                 Db::transaction(function () use ($payload, $requestId, $userId, $activityId, $itemId, $buyCount, $reserveExpireTime) {
-                    $item = Db::name('flash_sale_item')->where('id', $itemId)->lock(true)->find();
+                    $item = Db::name('flash_sale_item')->where('id', $itemId)->find();
                     if (!$item || (int)($item['activity_id'] ?? 0) !== $activityId) {
                         throw new ValidateException('活动商品不存在');
                     }
                     if ($this->hasPurchasedConflict($userId, (int)$item['goods_type'], (int)$item['goods_id'])) {
                         throw new ValidateException('你已购买该内容，无需重复抢购');
                     }
-                    $pendingCount = Db::name('flash_sale_order')
+                    // 与 createOrder 同步路径保持一致：合并统计查询，减少热点 DB 往返。
+                    $orderStats = Db::name('flash_sale_order')
                         ->where('user_id', $userId)
                         ->where('item_id', $itemId)
-                        ->where('status', 0)
-                        ->count();
+                        ->fieldRaw('SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS pending_count, SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS paid_count')
+                        ->find();
+                    $pendingCount = (int)($orderStats['pending_count'] ?? 0);
                     if ($pendingCount > 0) {
                         throw new ValidateException('你已有待支付订单，请先完成支付');
                     }
-                    $paidCount = Db::name('flash_sale_order')
-                        ->where('user_id', $userId)
-                        ->where('item_id', $itemId)
-                        ->where('status', 1)
-                        ->count();
+                    $paidCount = (int)($orderStats['paid_count'] ?? 0);
                     if ($paidCount >= max(1, (int)$item['limit_per_user'])) {
                         throw new ValidateException('超过限购数量');
                     }
@@ -1805,6 +1816,29 @@ class FlashSaleService
     }
 
     /**
+     * 读取队列发布重试抖动区间（毫秒），用于高峰错峰重试。
+     */
+    private function getQueuePublishRetryJitterMs(): int
+    {
+        $jitterMs = (int)env('FLASH_SALE_QUEUE_PUBLISH_RETRY_JITTER_MS', 30);
+        return max(0, min(300, $jitterMs));
+    }
+
+    /**
+     * 计算发布重试等待时长（微秒）：线性退避 + 抖动。
+     */
+    private function calcQueuePublishRetrySleepUs(int $baseSleepMs, int $attempt): int
+    {
+        $attempt = max(1, $attempt);
+        $waitMs = $baseSleepMs * $attempt;
+        $jitterMs = $this->getQueuePublishRetryJitterMs();
+        if ($jitterMs > 0) {
+            $waitMs += mt_rand(0, $jitterMs);
+        }
+        return min(2000, $waitMs) * 1000;
+    }
+
+    /**
      * 发布下单消息并按配置进行短重试。
      */
     private function publishQueueWithRetry(array $payload): bool
@@ -1815,7 +1849,7 @@ class FlashSaleService
         $retryTimes = $this->getQueuePublishRetryTimes();
         $retrySleepMs = $this->getQueuePublishRetrySleepMs();
         for ($i = 0; $i < $retryTimes; $i++) {
-            usleep($retrySleepMs * 1000);
+            usleep($this->calcQueuePublishRetrySleepUs($retrySleepMs, $i + 1));
             if (FlashSaleOrderQueueService::publish($payload)) {
                 return true;
             }

@@ -111,6 +111,59 @@ bash perf/flash-sale/run-scene-matrix.sh
 ACTIVITY_ID=2 ITEM_ID=9 MONITOR_ENABLED=1 PREPARE_EACH_SCENE=1 bash perf/flash-sale/run-scene-matrix.sh
 ```
 
+### 场景级独立商品（强烈建议）
+
+为避免前序场景消耗库存污染后续结果，建议为每个场景指定独立 `item_id`。
+
+方式一（推荐，显式变量）：
+
+```bash
+ACTIVITY_ID=2 MONITOR_ENABLED=1 PREPARE_EACH_SCENE=1 \
+SCENE_S1_ITEM_ID=1 \
+SCENE_S2_ITEM_ID=2 \
+SCENE_S3_ITEM_ID=3 \
+SCENE_S4_ITEM_ID=9 \
+SCENE_S5_ITEM_ID=1 \
+SCENE_S6_ITEM_ID=2 \
+bash perf/flash-sale/run-scene-matrix.sh
+```
+
+方式二（映射串）：
+
+```bash
+ACTIVITY_ID=2 MONITOR_ENABLED=1 PREPARE_EACH_SCENE=1 \
+SCENE_ITEM_MAP="S1:1,S2:2,S3:3,S4:9,S5:1,S6:2" \
+bash perf/flash-sale/run-scene-matrix.sh
+```
+
+> 优先级：`SCENE_Sx_ITEM_ID` > `SCENE_ITEM_MAP` > `ITEM_ID`（默认值）。
+
+### 跨活动双映射（activity + item）
+
+当测试商品分布在不同活动下时，建议同时指定场景级 `activity_id` 与 `item_id`：
+
+```bash
+MONITOR_ENABLED=1 PREPARE_EACH_SCENE=1 \
+SCENE_S1_ACTIVITY_ID=1 SCENE_S1_ITEM_ID=2 \
+SCENE_S2_ACTIVITY_ID=1 SCENE_S2_ITEM_ID=10 \
+SCENE_S3_ACTIVITY_ID=2 SCENE_S3_ITEM_ID=3 \
+SCENE_S4_ACTIVITY_ID=2 SCENE_S4_ITEM_ID=9 \
+SCENE_S5_ACTIVITY_ID=2 SCENE_S5_ITEM_ID=11 \
+SCENE_S6_ACTIVITY_ID=1 SCENE_S6_ITEM_ID=1 \
+bash perf/flash-sale/run-scene-matrix.sh
+```
+
+也支持映射串写法：
+
+```bash
+MONITOR_ENABLED=1 PREPARE_EACH_SCENE=1 \
+SCENE_ACTIVITY_MAP="S1:1,S2:1,S3:2,S4:2,S5:2,S6:1" \
+SCENE_ITEM_MAP="S1:2,S2:10,S3:3,S4:9,S5:11,S6:1" \
+bash perf/flash-sale/run-scene-matrix.sh
+```
+
+> 优先级：`SCENE_Sx_ACTIVITY_ID` > `SCENE_ACTIVITY_MAP` > `ACTIVITY_ID`（默认值）。
+
 ---
 
 ## 7. 结果记录模板（每轮复制填写）
@@ -152,4 +205,30 @@ ACTIVITY_ID=2 ITEM_ID=9 MONITOR_ENABLED=1 PREPARE_EACH_SCENE=1 bash perf/flash-s
 - S6：30分钟内无持续恶化趋势（内存、延迟、backlog）
 
 > 说明：阈值应以“当前稳定版本”作为基线，每次变更后只允许小幅波动，不应出现阶跃恶化。
+
+---
+
+## 9. 基线样例结果（S4 三轮 clean）
+
+以下为 2026-04-23 基于独立商品的 S4（20:1）三轮复测样例，可作为后续回归对照参考：
+
+- run 标签：`s4-repeat-clean-20260423-083641`
+- 轮次商品：
+  - Round1：`activity_id=2, item_id=3`
+  - Round2：`activity_id=2, item_id=9`
+  - Round3：`activity_id=2, item_id=11`
+
+| 指标 | mean | median | min | max | range |
+|---|---:|---:|---:|---:|---:|
+| final_success_rate | 5.00% | 5.00% | 5.00% | 5.00% | 0.00% |
+| token_fail_rate | 94.53% | 94.61% | 94.25% | 94.73% | 0.48% |
+| create_attempts | 100 | 100 | 100 | 100 | 0 |
+| create_fail_rate | 0.00% | 0.00% | 0.00% | 0.00% | 0.00% |
+| e2e_p95_ms | 21969.52 | 21479.15 | 20582.25 | 23847.15 | 3264.90 |
+| http_req_failed | 47.03% | 46.72% | 46.35% | 48.00% | 1.65% |
+
+说明：
+
+- 上述样例已规避“同一商品连续复测导致库存被首轮消耗”的污染问题。
+- 若后续同口径压测中 `create_fail_rate` 明显高于 `0%`，或 `e2e_p95_ms` 明显高于该区间，可判定为回归风险。
 
