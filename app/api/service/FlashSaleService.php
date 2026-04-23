@@ -23,6 +23,7 @@ class FlashSaleService
     private const TOKEN_CACHE_PREFIX = 'flash:sale:token:';
     private const TOKEN_BINDING_PREFIX = 'flash:sale:token:binding:';
     private const TOKEN_CONSUMED_PREFIX = 'flash:sale:token:consumed:';
+    private const TOKEN_ISSUE_WINDOW_PREFIX = 'flash:sale:token:issue:window:';
     private const RELEASE_ZSET_KEY = 'flash:sale:reserve:release';
     private const STOCK_KEY_PREFIX = 'flash:sale:stock:';
     private const PENDING_KEY_PREFIX = 'flash:sale:pending:';
@@ -45,11 +46,14 @@ class FlashSaleService
     private const MAX_CLIENT_IP_LENGTH = 64;
     private const MAX_DEVICE_ID_LENGTH = 128;
     private const MAX_RISK_EXTRA_JSON_LENGTH = 2000;
+    private const RISK_LOG_QUEUE_KEY = 'flash:sale:risk:log:queue';
     private const MSG_PENDING_ORDER_EXISTS = '你已有待支付订单，请先完成支付';
     private const MSG_QUEUEING_ACCEPTED = '抢购请求已受理，正在排队创建订单';
     private const MSG_QUEUE_BUSY_RETRY = '秒杀排队服务繁忙，请稍后重试';
     private const MSG_CREATE_ORDER_FAILED = '秒杀下单失败';
+    private const MSG_SYSTEM_BUSY_RETRY = '系统繁忙，请稍后重试';
     private const CREATE_FAIL_REASON_METRIC_PREFIX = 'flash:sale:create:fail:reason:';
+    private const TOKEN_ISSUE_FAIL_REASON_METRIC_PREFIX = 'flash:sale:token:issue:fail:reason:';
     private static ?bool $hasReserveExpireField = null;
 
     /**
@@ -187,11 +191,33 @@ class FlashSaleService
         $deviceId = $this->normalizeDeviceId($deviceId);
         $this->assertTokenRateLimit($userId, $activityId, $itemId, $clientIp, $deviceId);
         $this->assertActivityItemValid($activityId, $itemId);
-        $token = bin2hex(random_bytes(16));
-        $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
         $tokenTtlSeconds = $this->getTokenTtlSeconds();
-        Cache::set($cacheKey, 1, $tokenTtlSeconds);
-        $this->writeTokenBinding($token, $userId, $activityId, $itemId, $tokenTtlSeconds);
+        // P1 门禁：库存快照已售罄时不再签发 token，减少无效 create 请求。
+        $stockSnapshot = $this->getRedisAvailableStockSnapshot($itemId);
+        if ($stockSnapshot !== null && $stockSnapshot < 1) {
+            $this->recordTokenIssueFailureReason('sold_out', $userId, $activityId, $itemId, '库存不足');
+            throw new ValidateException('库存不足');
+        }
+        $quotaReserved = false;
+        if ($stockSnapshot !== null) {
+            $quotaReserved = $this->tryReserveTokenIssueQuota($activityId, $itemId, $stockSnapshot, $tokenTtlSeconds);
+            if (!$quotaReserved) {
+                $this->recordTokenIssueFailureReason('token_issue_quota_exceeded', $userId, $activityId, $itemId, '当前抢购人数较多，请稍后重试');
+                throw new ValidateException('当前抢购人数较多，请稍后重试');
+            }
+        }
+        try {
+            $token = bin2hex(random_bytes(16));
+            $cacheKey = $this->buildTokenCacheKey($userId, $activityId, $itemId, $token);
+            Cache::set($cacheKey, 1, $tokenTtlSeconds);
+            $this->writeTokenBinding($token, $userId, $activityId, $itemId, $tokenTtlSeconds);
+        } catch (\Throwable $e) {
+            if ($quotaReserved) {
+                $this->releaseTokenIssueQuota($activityId, $itemId);
+            }
+            $this->recordTokenIssueFailureReason('token_issue_cache_write_failed', $userId, $activityId, $itemId, $e->getMessage());
+            throw $e;
+        }
 
         return [
             'token' => $token,
@@ -356,10 +382,35 @@ class FlashSaleService
         $this->assertCreateRateLimit($userId, $activityId, $itemId, $clientIp, $deviceId);
         // 校验 request_id 生存窗口，防止旧请求重放。
         $this->assertRequestIdWindow($requestId);
+        // P0 快速失败：库存缓存已明确售罄时直接返回，避免进入锁/MQ重链路。
+        $stockSnapshot = $this->getRedisAvailableStockSnapshot($itemId);
+        if ($stockSnapshot !== null && $stockSnapshot < $buyCount) {
+            $this->setRequestState($requestId, [
+                'status' => 3,
+                'user_id' => $userId,
+                'message' => '库存不足',
+                'reserve_expire_time' => '',
+                'order_id' => 0,
+            ]);
+            $this->recordCreateOrderFailureReason('stock_not_enough', $requestId, $userId, $activityId, $itemId, '库存不足');
+            throw new ValidateException('库存不足');
+        }
 
         // request_id 维度互斥，确保同一请求只会被一个进程处理。
         $requestLockToken = $this->acquireRequestLock($requestId);
         if ($requestLockToken === '') {
+            // 锁竞争分支兜底复核 request_id 归属，避免跨用户探测状态。
+            $stateOnLockConflict = $this->getRequestState($requestId);
+            $stateUserId = (int)($stateOnLockConflict['user_id'] ?? 0);
+            if ($stateUserId > 0 && $stateUserId !== $userId) {
+                throw new ValidateException('request_id 不合法');
+            }
+            if ($stateUserId <= 0) {
+                $existsOnLockConflict = FlashSaleOrder::where('request_id', $requestId)->find();
+                if ($existsOnLockConflict && (int)$existsOnLockConflict->user_id !== $userId) {
+                    throw new ValidateException('request_id 不合法');
+                }
+            }
             // 其他进程已在处理，返回排队中由前端轮询结果接口。
             return $this->buildQueueingResponse($requestId);
         }
@@ -1359,6 +1410,56 @@ class FlashSaleService
     }
 
     /**
+     * 构造 token 发放窗口计数键（activity-item 维度）。
+     */
+    private function buildTokenIssueWindowKey(int $activityId, int $itemId): string
+    {
+        return self::TOKEN_ISSUE_WINDOW_PREFIX . $activityId . ':' . $itemId;
+    }
+
+    /**
+     * 申请 token 发放配额，限制“售罄前短时超发”。
+     */
+    private function tryReserveTokenIssueQuota(int $activityId, int $itemId, int $stockSnapshot, int $tokenTtlSeconds): bool
+    {
+        $limit = max(1, $stockSnapshot * $this->getTokenIssueStockFactor());
+        $ttlSeconds = max(30, $tokenTtlSeconds + 5);
+        $redis = $this->getRedisHandler();
+        if (!$redis || !method_exists($redis, 'eval')) {
+            return true;
+        }
+        try {
+            $ret = (int)$redis->eval(
+                "local current = tonumber(redis.call('GET', KEYS[1]) or '0'); local maxv = tonumber(ARGV[1]) or 0; local ttl = tonumber(ARGV[2]) or 30; if maxv <= 0 then return 0 end; if current >= maxv then return 0 end; current = tonumber(redis.call('INCR', KEYS[1]) or '0'); if current == 1 then redis.call('EXPIRE', KEYS[1], ttl) end; if current > maxv then redis.call('DECR', KEYS[1]); return 0 end; return 1",
+                [$this->buildTokenIssueWindowKey($activityId, $itemId), (string)$limit, (string)$ttlSeconds],
+                1
+            );
+            return $ret === 1;
+        } catch (\Throwable $e) {
+        }
+        return true;
+    }
+
+    /**
+     * 回滚 token 发放配额（仅在签发缓存失败时触发）。
+     */
+    private function releaseTokenIssueQuota(int $activityId, int $itemId): void
+    {
+        $redis = $this->getRedisHandler();
+        if (!$redis || !method_exists($redis, 'decr')) {
+            return;
+        }
+        try {
+            $key = $this->buildTokenIssueWindowKey($activityId, $itemId);
+            $current = (int)$redis->decr($key);
+            if ($current <= 0 && method_exists($redis, 'del')) {
+                $redis->del($key);
+            }
+        } catch (\Throwable $e) {
+        }
+    }
+
+    /**
      * 记录 token 与请求参数绑定关系，便于识别串参/重放。
      */
     private function writeTokenBinding(string $token, int $userId, int $activityId, int $itemId, int $ttlSeconds): void
@@ -1659,6 +1760,15 @@ class FlashSaleService
     }
 
     /**
+     * token 发放与库存的放大系数（用于短时削峰）。
+     */
+    private function getTokenIssueStockFactor(): int
+    {
+        $factor = (int)env('FLASH_SALE_TOKEN_ISSUE_STOCK_FACTOR', 2);
+        return max(1, min(10, $factor));
+    }
+
+    /**
      * 读取 token 消费重试次数配置。
      */
     private function getTokenConsumeRetryTimes(): int
@@ -1852,6 +1962,18 @@ class FlashSaleService
         } catch (ValidateException $e) {
             throw $e;
         } catch (\Throwable $e) {
+            $this->recordRiskEvent('rate_limit_guard_error', $context + [
+                'extra' => [
+                    'cache_key' => $key,
+                    'reason' => $reason,
+                    'error' => $e->getMessage(),
+                ],
+            ]);
+            // 默认 fail-close；仅显式开启时允许 fail-open。
+            $failOpen = (int)env('FLASH_SALE_RATE_LIMIT_FAIL_OPEN', 0) === 1;
+            if (!$failOpen) {
+                throw new ValidateException(self::MSG_SYSTEM_BUSY_RETRY);
+            }
         }
     }
 
@@ -1885,30 +2007,92 @@ class FlashSaleService
             return;
         }
         try {
-            $extra = $context['extra'] ?? [];
-            if (!is_array($extra)) {
-                $extra = ['raw' => (string)$extra];
+            $row = $this->buildRiskLogRow($reason, $context);
+            if ($row === []) {
+                return;
             }
-            $extraJson = json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if (!is_string($extraJson) || $extraJson === '') {
-                $extraJson = '{}';
+            if ($this->isRiskLogAsyncEnabled() && $this->enqueueRiskLogRow($row)) {
+                return;
             }
-            if (strlen($extraJson) > self::MAX_RISK_EXTRA_JSON_LENGTH) {
-                $extraJson = substr($extraJson, 0, self::MAX_RISK_EXTRA_JSON_LENGTH);
-            }
-            Db::name('flash_sale_risk_log')->insert([
-                'scene' => 'create_order',
-                'reason' => substr(trim($reason) === '' ? 'risk_blocked' : $reason, 0, 64),
-                'user_id' => (int)($context['user_id'] ?? 0),
-                'activity_id' => (int)($context['activity_id'] ?? 0),
-                'item_id' => (int)($context['item_id'] ?? 0),
-                'client_ip' => $this->normalizeClientIp((string)($context['client_ip'] ?? '')),
-                'device_id' => $this->normalizeDeviceId((string)($context['device_id'] ?? '')),
-                'extra_json' => $extraJson,
-                'create_time' => date('Y-m-d H:i:s'),
-            ]);
+            $this->persistRiskLogRow($row);
         } catch (\Throwable $e) {
         }
+    }
+
+    /**
+     * 组装风控日志落库结构。
+     *
+     * @return array<string, mixed>
+     */
+    private function buildRiskLogRow(string $reason, array $context = []): array
+    {
+        $extra = $context['extra'] ?? [];
+        if (!is_array($extra)) {
+            $extra = ['raw' => (string)$extra];
+        }
+        $extraJson = json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($extraJson) || $extraJson === '') {
+            $extraJson = '{}';
+        }
+        if (strlen($extraJson) > self::MAX_RISK_EXTRA_JSON_LENGTH) {
+            $extraJson = substr($extraJson, 0, self::MAX_RISK_EXTRA_JSON_LENGTH);
+        }
+        return [
+            'scene' => 'create_order',
+            'reason' => substr(trim($reason) === '' ? 'risk_blocked' : $reason, 0, 64),
+            'user_id' => (int)($context['user_id'] ?? 0),
+            'activity_id' => (int)($context['activity_id'] ?? 0),
+            'item_id' => (int)($context['item_id'] ?? 0),
+            'client_ip' => $this->normalizeClientIp((string)($context['client_ip'] ?? '')),
+            'device_id' => $this->normalizeDeviceId((string)($context['device_id'] ?? '')),
+            'extra_json' => $extraJson,
+            'create_time' => date('Y-m-d H:i:s'),
+        ];
+    }
+
+    /**
+     * 写入风控日志数据库。
+     *
+     * @param array<string, mixed> $row
+     */
+    private function persistRiskLogRow(array $row): void
+    {
+        Db::name('flash_sale_risk_log')->insert($row);
+    }
+
+    /**
+     * 判断是否开启风控日志异步写入。
+     */
+    private function isRiskLogAsyncEnabled(): bool
+    {
+        return (int)env('FLASH_SALE_RISK_LOG_ASYNC', 0) === 1;
+    }
+
+    /**
+     * 将风控日志推入 Redis 队列，失败时返回 false 供上层回退同步写入。
+     *
+     * @param array<string, mixed> $row
+     */
+    private function enqueueRiskLogRow(array $row): bool
+    {
+        $redis = $this->getRedisHandler();
+        if (!$redis || !method_exists($redis, 'lPush')) {
+            return false;
+        }
+        $payload = json_encode($row, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($payload) || $payload === '') {
+            return false;
+        }
+        $maxLen = max(1000, min(1000000, (int)env('FLASH_SALE_RISK_LOG_QUEUE_MAX_LEN', 200000)));
+        try {
+            $redis->lPush(self::RISK_LOG_QUEUE_KEY, $payload);
+            if (method_exists($redis, 'lTrim')) {
+                $redis->lTrim(self::RISK_LOG_QUEUE_KEY, 0, $maxLen - 1);
+            }
+            return true;
+        } catch (\Throwable $e) {
+        }
+        return false;
     }
 
     /**
@@ -2389,14 +2573,24 @@ class FlashSaleService
         if ($normalizedReason === '' || preg_match('/^[a-z0-9_.-]{2,64}$/', $normalizedReason) !== 1) {
             $normalizedReason = 'create_order_failed';
         }
-        Log::warning('flash-sale create-order failed', [
+        $logContext = [
             'reason' => $normalizedReason,
             'request_id' => $requestId,
             'user_id' => $userId,
             'activity_id' => $activityId,
             'item_id' => $itemId,
             'message' => $message,
-        ]);
+        ];
+        if ($normalizedReason === 'stock_not_enough') {
+            // 高频场景改为采样日志，避免 warning 日志洪峰影响排障信噪比。
+            $sampleRate = $this->getStockNotEnoughLogSampleRate();
+            if ($this->hitSampleRate($sampleRate)) {
+                $logContext['sample_rate'] = $sampleRate;
+                Log::info('flash-sale create-order failed (sampled)', $logContext);
+            }
+        } else {
+            Log::warning('flash-sale create-order failed', $logContext);
+        }
         $redis = $this->getRedisHandler();
         if (!$redis || !method_exists($redis, 'incr')) {
             return;
@@ -2412,6 +2606,68 @@ class FlashSaleService
             }
         } catch (\Throwable $e) {
         }
+    }
+
+    /**
+     * 记录 issueToken 失败原因（结构化日志 + Redis 计数器）。
+     */
+    private function recordTokenIssueFailureReason(string $reason, int $userId, int $activityId, int $itemId, string $message = ''): void
+    {
+        $normalizedReason = strtolower(trim($reason));
+        if ($normalizedReason === '' || preg_match('/^[a-z0-9_.-]{2,64}$/', $normalizedReason) !== 1) {
+            $normalizedReason = 'token_issue_failed';
+        }
+        Log::warning('flash-sale issue-token failed', [
+            'reason' => $normalizedReason,
+            'user_id' => $userId,
+            'activity_id' => $activityId,
+            'item_id' => $itemId,
+            'message' => $message,
+        ]);
+        $redis = $this->getRedisHandler();
+        if (!$redis || !method_exists($redis, 'incr')) {
+            return;
+        }
+        $metricKey = self::TOKEN_ISSUE_FAIL_REASON_METRIC_PREFIX . date('Ymd') . ':' . $normalizedReason;
+        try {
+            $redis->incr($metricKey);
+            if (method_exists($redis, 'expire') && method_exists($redis, 'ttl')) {
+                $ttl = (int)$redis->ttl($metricKey);
+                if ($ttl < 1) {
+                    $redis->expire($metricKey, 7 * 24 * 3600);
+                }
+            }
+        } catch (\Throwable $e) {
+        }
+    }
+
+    /**
+     * 高频库存不足日志采样率（0-1）。
+     */
+    private function getStockNotEnoughLogSampleRate(): float
+    {
+        $rate = (float)env('FLASH_SALE_STOCK_NOT_ENOUGH_LOG_SAMPLE_RATE', 0.02);
+        if ($rate < 0) {
+            return 0.0;
+        }
+        if ($rate > 1) {
+            return 1.0;
+        }
+        return $rate;
+    }
+
+    /**
+     * 按采样率决定是否记录日志。
+     */
+    private function hitSampleRate(float $rate): bool
+    {
+        if ($rate <= 0) {
+            return false;
+        }
+        if ($rate >= 1) {
+            return true;
+        }
+        return mt_rand(1, 1000000) <= (int)round($rate * 1000000);
     }
 
     /**
@@ -2497,6 +2753,32 @@ class FlashSaleService
     private function getStockCacheKey(int $itemId): string
     {
         return self::STOCK_KEY_PREFIX . $itemId;
+    }
+
+    /**
+     * 读取 Redis 可售库存快照；返回 null 表示无法判定（不中断主流程）。
+     */
+    private function getRedisAvailableStockSnapshot(int $itemId): ?int
+    {
+        if ($itemId <= 0) {
+            return null;
+        }
+        $redis = $this->getRedisHandler();
+        if (!$redis || !method_exists($redis, 'get')) {
+            return null;
+        }
+        try {
+            $raw = $redis->get($this->getStockCacheKey($itemId));
+            if ($raw === null || $raw === false || $raw === '') {
+                return null;
+            }
+            if (!is_numeric((string)$raw)) {
+                return null;
+            }
+            return max(0, (int)$raw);
+        } catch (\Throwable $e) {
+        }
+        return null;
     }
 
     /**
@@ -2631,14 +2913,7 @@ class FlashSaleService
             } catch (\Throwable $e) {
             }
         }
-        try {
-            if (Cache::has($lockKey)) {
-                return '';
-            }
-            Cache::set($lockKey, $lockToken, $ttlSeconds);
-            return $lockToken;
-        } catch (\Throwable $e) {
-        }
+        // Redis 不可用时，避免非原子 has+set 造成并发竞态，直接安全失败。
         return '';
     }
 

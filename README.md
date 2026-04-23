@@ -105,15 +105,28 @@ app/djxs_manage
 - 秒杀：
   - `FLASH_SALE_TOKEN_TTL_SECONDS`
   - `FLASH_SALE_TOKEN_CONSUME_RETRY_TIMES`
+  - `FLASH_SALE_TOKEN_ISSUE_STOCK_FACTOR`
+  - `FLASH_SALE_STOCK_NOT_ENOUGH_LOG_SAMPLE_RATE`
+  - `FLASH_SALE_RISK_LOG_ASYNC`
+  - `FLASH_SALE_RISK_LOG_QUEUE_MAX_LEN`
+  - `FLASH_SALE_RISK_LOG_CONSUME_BATCH_SIZE`
+  - `FLASH_SALE_RISK_LOG_CONSUME_IDLE_SLEEP_MS`
   - `FLASH_SALE_QUEUE_PUBLISH_RETRY_TIMES`
   - `FLASH_SALE_REQUEST_LOCK_TTL_SECONDS`
   - `FLASH_SALE_USER_ITEM_LOCK_TTL_SECONDS`
+  - `FLASH_SALE_RATE_LIMIT_FAIL_OPEN`
   - `FLASH_SALE_RELEASE_FALLBACK_*`
 
 建议：
 
 - 生产环境关闭 `APP_DEBUG`
 - 不要将真实密钥、数据库密码、支付证书提交到仓库
+- `FLASH_SALE_RATE_LIMIT_FAIL_OPEN` 默认建议 `0`（限流组件异常时 fail-close，返回“系统繁忙，请稍后重试”）
+- 仅在应急排障窗口可短时设为 `1`（fail-open），并配合流量保护；窗口结束后务必恢复 `0`
+- `FLASH_SALE_TOKEN_ISSUE_STOCK_FACTOR` 高并发压测可从 `1` 起步；值越小越保守（更少 token 超发），值越大越激进（可能增加 create 阶段失败）
+- `FLASH_SALE_STOCK_NOT_ENOUGH_LOG_SAMPLE_RATE` 默认建议 `0.02`（2%）；可在压测期临时调低以减少 warning 噪音
+- `FLASH_SALE_RISK_LOG_ASYNC` 建议灰度开启（先 `0` 后 `1`）；异步写失败会自动回退同步落库
+- `FLASH_SALE_RISK_LOG_QUEUE_MAX_LEN` 建议 >= `200000`，避免洪峰时队列无限增长
 
 ## 7. 本地启动（推荐 Docker Compose）
 
@@ -164,6 +177,7 @@ php think list
   - `php think order:contract-check`
 - 秒杀
   - `php think flash-sale:order-consume`
+  - `php think flash-sale:risk-log-consume`
   - `php think flash-sale:release-reserve`
   - `php think flash-sale:cleanup-cache`
   - `php think flash-sale:cleanup-risk`
@@ -231,6 +245,7 @@ php think list
   - [ ] 配置变更后执行容器重启，确保新环境变量生效
 - 消费者进程
   - [ ] `flash-sale-order-consume` 处于 RUNNING
+  - [ ] 开启 `FLASH_SALE_RISK_LOG_ASYNC=1` 时，`flash-sale-risk-log-consume` 处于 RUNNING
   - [ ] `content-stat-consume`、`channel-distribution-consume` 处于 RUNNING
 - 热点链路冒烟
   - [ ] `GET /api/health` 返回正常
