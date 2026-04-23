@@ -49,6 +49,7 @@ class FlashSaleService
     private const MSG_QUEUEING_ACCEPTED = '抢购请求已受理，正在排队创建订单';
     private const MSG_QUEUE_BUSY_RETRY = '秒杀排队服务繁忙，请稍后重试';
     private const MSG_CREATE_ORDER_FAILED = '秒杀下单失败';
+    private const CREATE_FAIL_REASON_METRIC_PREFIX = 'flash:sale:create:fail:reason:';
     private static ?bool $hasReserveExpireField = null;
 
     /**
@@ -335,6 +336,7 @@ class FlashSaleService
                 'reserve_expire_time' => '',
                 'order_id' => 0,
             ]);
+            $this->recordCreateOrderFailureReason('token_empty', $requestId, $userId, $activityId, $itemId, 'token 不能为空');
             throw new ValidateException('token 不能为空');
         }
         if (!$this->isValidToken($token)) {
@@ -346,6 +348,7 @@ class FlashSaleService
                 'reserve_expire_time' => '',
                 'order_id' => 0,
             ]);
+            $this->recordCreateOrderFailureReason('token_invalid', $requestId, $userId, $activityId, $itemId, 'token 不合法');
             throw new ValidateException('token 不合法');
         }
         // 创建前先做黑名单与限频拦截。
@@ -364,6 +367,7 @@ class FlashSaleService
         $userItemLockToken = $this->acquireUserItemLock($activityId, $itemId, $userId);
         if ($userItemLockToken === '') {
             $this->releaseRequestLock($requestId, $requestLockToken);
+            $this->recordCreateOrderFailureReason('user_item_lock_conflict', $requestId, $userId, $activityId, $itemId, '请求处理中，请勿重复提交');
             throw new ValidateException('请求处理中，请勿重复提交');
         }
         // 统一失败态落缓存，避免重复拼装状态结构。
@@ -386,6 +390,7 @@ class FlashSaleService
         if ($bindingMismatchMessage !== '') {
             $releaseCreateLocks();
             $markRequestFailed($bindingMismatchMessage);
+            $this->recordCreateOrderFailureReason('token_binding_mismatch', $requestId, $userId, $activityId, $itemId, $bindingMismatchMessage);
             // 记录异常行为，供风控与追踪分析。
             $this->recordRiskEvent('token_mismatch', [
                 'user_id' => $userId,
@@ -412,12 +417,21 @@ class FlashSaleService
             // 归因 token 失败类型，统一返回用户可理解提示。
             $tokenFailure = $this->resolveTokenConsumeFailure($token, $cacheKey);
             $markRequestFailed((string)$tokenFailure['message']);
+            $this->recordCreateOrderFailureReason(
+                (string)($tokenFailure['reason'] ?? 'token_consume_failed'),
+                $requestId,
+                $userId,
+                $activityId,
+                $itemId,
+                (string)$tokenFailure['message']
+            );
             $this->recordTokenConsumeFailure($requestId, $userId, $activityId, $itemId, $token, $cacheKey, (array)$tokenFailure);
             throw new ValidateException((string)$tokenFailure['message']);
         }
         // 二次检查用户商品待处理标记，拦截重复待支付单。
         if ($this->hasUserItemPendingMarker($itemId, $userId)) {
             $releaseCreateLocks();
+            $this->recordCreateOrderFailureReason('pending_marker_conflict', $requestId, $userId, $activityId, $itemId, self::MSG_PENDING_ORDER_EXISTS);
             throw new ValidateException(self::MSG_PENDING_ORDER_EXISTS);
         }
         $redisReserved = false;
@@ -530,6 +544,14 @@ class FlashSaleService
             $this->rollbackCreateOrderReservation($itemId, $userId, $buyCount, $lockedReserved, $redisReserved);
             // 失败时清理用户-商品处理中标记。
             $this->clearUserItemPendingMarker($itemId, $userId);
+            $this->recordCreateOrderFailureReason(
+                $this->resolveCreateOrderFailureReason($e),
+                $requestId,
+                $userId,
+                $activityId,
+                $itemId,
+                $e instanceof ValidateException ? $e->getMessage() : self::MSG_CREATE_ORDER_FAILED
+            );
             // 失败态写入 request_state，前端可通过 result 读到具体失败信息。
             $markRequestFailed($e instanceof ValidateException ? $e->getMessage() : self::MSG_CREATE_ORDER_FAILED);
             throw $e;
@@ -2356,6 +2378,79 @@ class FlashSaleService
             'reason' => (string)($lastPublishError['reason'] ?? ''),
             'message' => (string)($lastPublishError['message'] ?? ''),
         ]);
+    }
+
+    /**
+     * 统一记录 createOrder 失败原因（结构化日志 + Redis 计数器）。
+     */
+    private function recordCreateOrderFailureReason(string $reason, string $requestId, int $userId, int $activityId, int $itemId, string $message = ''): void
+    {
+        $normalizedReason = strtolower(trim($reason));
+        if ($normalizedReason === '' || preg_match('/^[a-z0-9_.-]{2,64}$/', $normalizedReason) !== 1) {
+            $normalizedReason = 'create_order_failed';
+        }
+        Log::warning('flash-sale create-order failed', [
+            'reason' => $normalizedReason,
+            'request_id' => $requestId,
+            'user_id' => $userId,
+            'activity_id' => $activityId,
+            'item_id' => $itemId,
+            'message' => $message,
+        ]);
+        $redis = $this->getRedisHandler();
+        if (!$redis || !method_exists($redis, 'incr')) {
+            return;
+        }
+        $metricKey = self::CREATE_FAIL_REASON_METRIC_PREFIX . date('Ymd') . ':' . $normalizedReason;
+        try {
+            $redis->incr($metricKey);
+            if (method_exists($redis, 'expire') && method_exists($redis, 'ttl')) {
+                $ttl = (int)$redis->ttl($metricKey);
+                if ($ttl < 1) {
+                    $redis->expire($metricKey, 7 * 24 * 3600);
+                }
+            }
+        } catch (\Throwable $e) {
+        }
+    }
+
+    /**
+     * 将 createOrder 异常映射为稳定的失败原因代码。
+     */
+    private function resolveCreateOrderFailureReason(\Throwable $e): string
+    {
+        if (!$e instanceof ValidateException) {
+            return 'create_order_exception';
+        }
+        $message = trim($e->getMessage());
+        if ($message === self::MSG_QUEUE_BUSY_RETRY) {
+            return 'queue_publish_failed';
+        }
+        if ($message === self::MSG_PENDING_ORDER_EXISTS) {
+            return 'pending_order_exists';
+        }
+        if ($message === '请求处理中，请稍后重试') {
+            return 'lock_refresh_failed';
+        }
+        if ($message === '库存不足') {
+            return 'stock_not_enough';
+        }
+        if ($message === '超过限购数量') {
+            return 'purchase_limit_exceeded';
+        }
+        if ($message === '活动未开始或已结束') {
+            return 'activity_inactive';
+        }
+        if ($message === '活动商品不存在') {
+            return 'activity_item_not_found';
+        }
+        if ($message === '秒杀价格异常') {
+            return 'invalid_price';
+        }
+        if ($message === '你已购买该内容，无需重复抢购') {
+            return 'already_owned';
+        }
+        return 'validate_failed';
     }
 
     /**
