@@ -73,7 +73,7 @@ MONITOR_CONFIG = {
     'mysql': {
         'host': os.getenv('MONITOR_MYSQL_HOST', '127.0.0.1'),
         'port': int(os.getenv('MONITOR_MYSQL_PORT', 3307)),
-        'user': os.getenv('MONITOR_MYSQL_USER', 'root'),
+        'user': os.getenv('MONITOR_MYSQL_USER', ''),
         'password': os.getenv('MONITOR_MYSQL_PASSWORD', ''),
         'database': os.getenv('MONITOR_MYSQL_DATABASE', 'djxs_manage'),
         'max_connections_threshold': int(os.getenv('MONITOR_MAX_CONNECTIONS_THRESHOLD', 100)),
@@ -90,8 +90,8 @@ MONITOR_CONFIG = {
     'rabbitmq': {
         'host': os.getenv('MONITOR_RABBITMQ_HOST', '127.0.0.1'),
         'port': int(os.getenv('MONITOR_RABBITMQ_PORT', 15672)),
-        'user': os.getenv('MONITOR_RABBITMQ_USER', 'admin'),
-        'password': os.getenv('MONITOR_RABBITMQ_PASSWORD', 'wsg@666666666'),
+        'user': os.getenv('MONITOR_RABBITMQ_USER', ''),
+        'password': os.getenv('MONITOR_RABBITMQ_PASSWORD', ''),
         'queue_backlog_threshold': int(os.getenv('MONITOR_QUEUE_BACKLOG_THRESHOLD', 1000)),
         'flash_sale_queues': [
             'djxs.flash_sale.order_create.s0',
@@ -115,11 +115,11 @@ MONITOR_CONFIG = {
     },
     
     'supervisor': {
-        'container': os.getenv('MONITOR_SUPERVISOR_CONTAINER', 'web-supervisor'),
-        'http_host': os.getenv('MONITOR_SUPERVISOR_HTTP_HOST', 'supervisor'),
+        'container': os.getenv('MONITOR_SUPERVISOR_CONTAINER', ''),
+        'http_host': os.getenv('MONITOR_SUPERVISOR_HTTP_HOST', ''),
         'http_port': int(os.getenv('MONITOR_SUPERVISOR_HTTP_PORT', 9001)),
-        'http_user': os.getenv('MONITOR_SUPERVISOR_HTTP_USER', 'admin'),
-        'http_password': os.getenv('MONITOR_SUPERVISOR_HTTP_PASSWORD', 'DJXS_supervisor_123456'),
+        'http_user': os.getenv('MONITOR_SUPERVISOR_HTTP_USER', ''),
+        'http_password': os.getenv('MONITOR_SUPERVISOR_HTTP_PASSWORD', ''),
         'critical_processes': [
             'flash-sale-order-consume',
             'flash-sale-risk-log-consume',
