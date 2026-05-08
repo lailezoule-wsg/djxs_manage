@@ -29,6 +29,6 @@ class ChannelDistributionConsume extends Command
     {
         $job = new ChannelDistributionConsumeJob();
         $code = $job->run($output);
-        return $code === 0 ? self::SUCCESS : self::FAILURE;
+        return $code === 0 ? 0 : 1;
     }
 }

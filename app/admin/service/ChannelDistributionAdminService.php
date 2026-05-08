@@ -540,6 +540,13 @@ class ChannelDistributionAdminService extends BaseAdminService
      */
     public function consumePublishMessage(array $payload): void
     {
+        $type = trim((string)($payload['type'] ?? ''));
+        
+        if ($type === 'spider_task') {
+            $this->consumeSpiderTask($payload);
+            return;
+        }
+        
         $taskNo = trim((string)($payload['task_no'] ?? ''));
         if ($taskNo === '') {
             return;
@@ -553,6 +560,96 @@ class ChannelDistributionAdminService extends BaseAdminService
         foreach ($tasks as $task) {
             $this->publishSingleTask($task);
         }
+    }
+    
+    private function consumeSpiderTask(array $payload): void
+    {
+        $taskId = (int)($payload['task_id'] ?? 0);
+        if ($taskId <= 0) {
+            return;
+        }
+        
+        $task = Db::name('paqu_task')->where('id', $taskId)->find();
+        if (!$task) {
+            return;
+        }
+        
+        $spiderType = (int)($task['type'] ?? 1) === 1 ? 'novel' : 'drama';
+        $this->publishToCelery($taskId, $spiderType);
+    }
+    
+    private function publishToCelery(int $taskId, string $spiderType): void
+    {
+        $taskName = $spiderType === 'novel' ? 'crawler.tasks.start_novel_spider' : 'crawler.tasks.start_drama_spider';
+        
+        $body = json_encode([
+            'task' => $taskName,
+            'id' => uniqid('celery-'),
+            'args' => [(string)$taskId],
+            'kwargs' => [],
+            'retries' => 0,
+            'eta' => null,
+            'expires' => null,
+            'queue' => 'celery',
+            'exchange' => '',
+            'exchange_type' => 'direct',
+            'routing_key' => 'celery',
+            'priority' => 0,
+            'delivery_mode' => 2,
+            'delivery_info' => [],
+            'hostname' => null,
+            'timestamp' => time(),
+            'acknowledged' => false,
+            'properties' => [],
+            'headers' => [],
+        ], JSON_UNESCAPED_UNICODE);
+        
+        $this->publishToQueue($body, 'celery');
+    }
+    
+    private function publishToQueue(string $body, string $queue): void
+    {
+        $cfg = config('rabbitmq');
+        if (!is_array($cfg)) {
+            return;
+        }
+        $host = (string)($cfg['host'] ?? '127.0.0.1');
+        $port = (int)($cfg['port'] ?? 5672);
+        $user = (string)($cfg['user'] ?? 'guest');
+        $password = (string)($cfg['password'] ?? 'guest');
+        $vhost = (string)($cfg['vhost'] ?? '/');
+        
+        try {
+            $connection = new \PhpAmqpLib\Connection\AMQPStreamConnection(
+                $host,
+                $port,
+                $user,
+                $password,
+                $vhost
+            );
+            $channel = $connection->channel();
+            $channel->queue_declare($queue, false, true, false, false);
+            $message = new \PhpAmqpLib\Message\AMQPMessage($body, [
+                'content_type' => 'application/json',
+                'delivery_mode' => \PhpAmqpLib\Message\AMQPMessage::DELIVERY_MODE_PERSISTENT,
+            ]);
+            $channel->basic_publish($message, '', $queue);
+            $channel->close();
+            $connection->close();
+        } catch (\Throwable $e) {
+            \think\facade\Log::warning('publishToQueue failed', ['message' => $e->getMessage(), 'queue' => $queue]);
+        }
+    }
+    
+    private function logSpiderError(int $taskId, string $message): void
+    {
+        Db::name('paqu_log')->insert([
+            'task_id' => $taskId,
+            'level' => 4,
+            'message' => $message,
+            'url' => '',
+            'create_time' => date('Y-m-d H:i:s'),
+        ]);
     }
 
     private function publishSingleTask(array $task): void

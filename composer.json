@@ -26,7 +26,8 @@
         "topthink/think-filesystem": "^2.0|^3.0",
         "topthink/think-multi-app": "^1.1",
         "firebase/php-jwt": "^7.0",
-        "php-amqplib/php-amqplib": "^3.0"
+        "php-amqplib/php-amqplib": "^3.0",
+        "promphp/prometheus_client_php": "^2.15"
     },
     "require-dev": {
         "topthink/think-trace": "^2.0"

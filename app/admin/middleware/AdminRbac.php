@@ -22,8 +22,15 @@ class AdminRbac
         $codes = $rbac->getPermissionCodesForAdmin($adminId);
         $request->adminPermissions = $codes;
 
-        $controller = (string)$request->controller();
-        $action = (string)$request->action();
+        // 从路由信息中获取控制器名称（优先使用路由定义的名称）
+        $routeInfo = $request->rule()?->getRoute();
+        if ($routeInfo && is_string($routeInfo) && str_contains($routeInfo, '/')) {
+            [$controller, $action] = explode('/', $routeInfo);
+        } else {
+            $controller = (string)$request->controller();
+            $action = (string)$request->action();
+        }
+        
         $key = $controller . '@' . $action;
 
         $map = (array)(config('admin_route_permission.map') ?? []);

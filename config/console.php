@@ -5,6 +5,7 @@
 return [
     // 指令定义
     'commands' => [
+        \app\command\MigratePaquCommand::class,
         \app\command\CancelTimeoutOrders::class,
         \app\command\OrderContractCheck::class,
         \app\command\FlashSaleCleanupRisk::class,

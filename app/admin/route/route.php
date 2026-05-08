@@ -3,6 +3,7 @@
 use think\facade\Route;
 
 Route::post('login', 'Auth/login');
+Route::get('csrf-token', 'Auth/csrfToken');
 Route::get('health', function () {
     return json(['status' => 'ok', 'time' => date('Y-m-d H:i:s')]);
 });
@@ -248,4 +249,31 @@ Route::group('', function () {
         Route::get('list', 'Config/list');
         Route::put('update', 'Config/update');
     });
-})->middleware(['admin_auth', 'admin_rbac']);
+
+    Route::group('paqu', function () {
+        Route::get('/', 'PaquTask/list');
+        Route::get('task/list', 'PaquTask/list');
+        Route::get('task/:id', 'PaquTask/detail');
+        Route::post('task/create', 'PaquTask/create');
+        Route::put('task/:id', 'PaquTask/update');
+        Route::delete('task/:id', 'PaquTask/delete');
+        Route::post('task/:id/start', 'PaquTask/start');
+        Route::post('task/:id/stop', 'PaquTask/stop');
+        Route::post('task/:id/cancel', 'PaquTask/cancel');
+
+        Route::get('source/list', 'PaquSource/list');
+        Route::get('source/:id', 'PaquSource/detail');
+        Route::post('source/create', 'PaquSource/create');
+        Route::put('source/:id', 'PaquSource/update');
+        Route::delete('source/:id', 'PaquSource/delete');
+        Route::post('source/:id/test', 'PaquSource/test');
+        Route::get('source/:sourceId/category/list', 'PaquSource/categoryList');
+        Route::post('source/:sourceId/category/save', 'PaquSource/saveCategories');
+
+        Route::get('monitor/tasks', 'PaquMonitor/tasks');
+        Route::get('monitor/logs/:task_id', 'PaquMonitor/logs');
+        Route::get('monitor/progress/:task_id', 'PaquMonitor/progress');
+        Route::get('monitor/errors', 'PaquMonitor/errors');
+        Route::get('monitor/stats', 'PaquMonitor/stats');
+    });
+})->middleware(['admin_auth', 'admin_csrf', 'admin_rbac']);

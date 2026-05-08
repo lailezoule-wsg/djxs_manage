@@ -7,6 +7,8 @@ use app\api\service\FlashSaleService;
 use app\common\service\FlashSaleRealtimeService;
 use app\common\controller\BaseApiController;
 use think\App;
+use Prometheus\CollectorRegistry;
+use Prometheus\Storage\InMemory;
 
 /**
  * 用户端秒杀活动接口
@@ -76,18 +78,84 @@ class FlashSale extends BaseApiController
      */
     public function createOrder()
     {
+        $startTime = microtime(true);
+        $status = 'failed';
+        $errorType = null;
+        $activityId = (int)($this->request->post('activity_id') ?? 0);
+        $itemId = (int)($this->request->post('item_id') ?? 0);
+
+        // 初始化 Prometheus 指标
+        $registry = new CollectorRegistry(new InMemory());
+        $requestCounter = $registry->registerCounter(
+            'flash_sale',
+            'order_requests_total',
+            '秒杀下单请求总数',
+            ['activity_id', 'item_id']
+        );
+        $orderCounter = $registry->registerCounter(
+            'flash_sale',
+            'order_create_total',
+            '秒杀下单总数',
+            ['status', 'activity_id', 'item_id']
+        );
+        $errorCounter = $registry->registerCounter(
+            'flash_sale',
+            'order_errors_total',
+            '秒杀下单错误总数',
+            ['error_type', 'activity_id', 'item_id']
+        );
+        $latencyHistogram = $registry->registerHistogram(
+            'flash_sale',
+            'order_create_duration_seconds',
+            '秒杀下单响应时间',
+            ['activity_id', 'item_id'],
+            [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5]
+        );
+
         try {
+            // 记录请求开始
+            $requestCounter->inc([(string)$activityId, (string)$itemId]);
+
             $userId = $this->getUserId();
             if ($userId instanceof \think\Response) {
+                $status = 'auth_failed';
+                $errorType = 'authentication_error';
                 return $userId;
             }
             $payload = $this->request->post();
             $payload['client_ip'] = (string)$this->request->ip();
             $payload['device_id'] = trim((string)($this->request->header('x-device-id') ?: $this->request->header('x-device')));
             $result = $this->service->createOrder((int)$userId, $payload);
+
+            // 下单成功
+            $status = 'success';
+            $orderCounter->inc([$status, (string)$activityId, (string)$itemId]);
+
             return $this->success($result, '下单成功');
         } catch (\Throwable $e) {
+            // 记录错误类型
+            $errorMessage = $e->getMessage();
+            if (str_contains($errorMessage, '库存') || str_contains($errorMessage, 'Stock')) {
+                $status = 'stock_out';
+                $errorType = 'stock_insufficient';
+            } elseif (str_contains($errorMessage, '令牌') || str_contains($errorMessage, 'token')) {
+                $status = 'token_failed';
+                $errorType = 'token_error';
+            } elseif (str_contains($errorMessage, '重复') || str_contains($errorMessage, 'duplicate')) {
+                $status = 'duplicate';
+                $errorType = 'duplicate_order';
+            } else {
+                $errorType = 'unknown';
+            }
+
+            $orderCounter->inc([$status, (string)$activityId, (string)$itemId]);
+            $errorCounter->inc([$errorType, (string)$activityId, (string)$itemId]);
+
             return $this->failByException($e);
+        } finally {
+            // 记录响应时间
+            $duration = microtime(true) - $startTime;
+            $latencyHistogram->observe($duration, [(string)$activityId, (string)$itemId]);
         }
     }
 

@@ -29,6 +29,13 @@ return [
             'prefix'     => env('REDIS_PREFIX', 'djxs_manage:'),
             'tag_prefix' => 'tag:',
             'serialize'  => [],
+            // 连接池配置 - 高并发场景下提高性能
+            'pool'       => [
+                'min'          => (int) env('REDIS_POOL_MIN', 10),      // 最小连接数
+                'max'          => (int) env('REDIS_POOL_MAX', 100),     // 最大连接数
+                'wait_timeout' => (float) env('REDIS_POOL_WAIT_TIMEOUT', 3.0), // 等待超时时间(秒)
+                'expire'       => (int) env('REDIS_POOL_EXPIRE', 3600), // 连接过期时间(秒)
+            ],
         ],
     ],
 ];
